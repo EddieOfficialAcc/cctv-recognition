@@ -196,6 +196,21 @@ def get_baseline(record_id: UUID) -> Baseline | None:
             return Baseline(record_id=row[0], approved_at=row[1].replace(tzinfo=timezone.utc)) if row else None
 
 
+def get_baseline_evidence(region: str, shop_code: str, camera_name: str) -> bytes | None:
+    with closing(connect(DatabaseSettings())) as connection:
+        with closing(connection.cursor()) as cursor:
+            row = cursor.execute(
+                "SELECT TOP 1 r.evidence FROM dbo.recognition_baselines b "
+                "JOIN dbo.recognition_records r ON r.id = b.record_id "
+                "WHERE b.region COLLATE Latin1_General_100_BIN2 = ? COLLATE Latin1_General_100_BIN2 "
+                "AND b.shop_code COLLATE Latin1_General_100_BIN2 = ? COLLATE Latin1_General_100_BIN2 "
+                "AND b.camera_name COLLATE Latin1_General_100_BIN2 = ? COLLATE Latin1_General_100_BIN2 "
+                "ORDER BY b.id DESC",
+                region, shop_code, camera_name,
+            ).fetchone()
+            return bytes(row[0]) if row else None
+
+
 def update_review(record_id: UUID, update: ReviewUpdate) -> RecognitionRecord | None:
     with closing(connect(DatabaseSettings())) as connection:
         with closing(connection.cursor()) as cursor:

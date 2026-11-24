@@ -12,10 +12,9 @@ Vite and Tailwind CSS frontend and a Python FastAPI backend.
 
 The screenshot workflow supports validated uploads, persisted recognition
 results and evidence, a searchable/paginated inspection table, and operator
-review with notes. Experimental timestamp OCR and manual burst checks are
-optional, and operators can approve baseline evidence. Direct device
-connections, automated capture, authentication, and baseline scene comparison
-are not yet implemented.
+review with notes. One vision API request analyzes the screenshot and optional
+burst frames and approved baseline. Direct device connections, automated
+capture and authentication are not yet implemented.
 The health endpoint checks the API process, not any camera or database.
 
 ## Local development (Windows PowerShell)
@@ -90,6 +89,17 @@ Keep the SSH terminal open; enter its password interactively. Inside Docker,
 
 ## Screenshot recognition & records
 
+Configure `VISION_API_KEY` in `backend\.env` with a rotated key. The default
+`VISION_ENDPOINT` and `VISION_DEPLOYMENT` are listed in `backend\.env.example`;
+override them if necessary. The backend uses the OpenAI-compatible chat
+completions API and requires the deployment to support image inputs and JSON
+responses. Never put the key in frontend code or commit it to Git.
+
+Each upload sends the image, any additional burst frames, and the matching
+approved baseline (if present) to the configured vision service. Confirm your
+organization's data handling requirements before using real camera evidence.
+No live API request is made during the automated tests.
+
 After configuring SQL Server, explicitly apply the additive schema using a login
 authorized to create tables and indexes:
 
@@ -132,16 +142,16 @@ indexes and foreign keys. `NVARCHAR` metadata
 supports both Traditional and Simplified Chinese. No database changes happen
 merely by opening the UI or changing its language.
 
-The initial `screenshot-statistics-v1` analyzer screens for possible black/blank
-feeds using central-image luminance and variance. This is a heuristic, not a
-validated fulfillment of the PRD's accuracy KPIs. Dark scenes can be false
-positives. No-signal text overlays, freeze, and flicker are not verified for a
-single image. Timestamp OCR is disabled by default; scene comparison is
-explicitly **Not assessed**, with reasons in the review drawer. A screenshot
-with no detected black/blank pattern is **Needs verification**, never certified
-healthy. Upload time is not substituted for the camera's capture time. OCR
-requires a configured engine; displacement checks require a verified baseline
-and comparison engine.
+The `vision-llm-v1` analyzer requests signal, timestamp reading and scene
+analysis in a single model call. A matching approved baseline is supplied for
+scene comparison when available. Without a baseline, a scene pass is changed
+to **Not assessed**; obvious visible problems can still be flagged. The model
+can make mistakes and has not been validated against the project's accuracy
+KPIs. Verify results against labeled representative images before operational
+use and review the live feed; a single screenshot cannot verify freeze or
+flicker. An unflagged record remains **Needs verification**, not certified
+healthy. Model/service errors abort the upload rather than silently saving a
+success-shaped result.
 
 ### Optional manual burst checks (experimental)
 
@@ -153,12 +163,9 @@ at most 1 MB, have the same dimensions as the first image, and use the accepted
 image formats. All frames and the duration are saved with the record in one
 transaction and can be reviewed in the record drawer.
 
-The Pillow-based prototype checks for near-identical consecutive frames and
-pronounced alternating brightness changes in the central image. It can miss
-faults and can flag a stationary scene or normal lighting changes. It does not
-verify acquisition timing or prove that a stream is healthy; review live feeds
-and validate thresholds using labeled camera bursts before operational use.
-It is not the planned OpenCV-based production detector.
+All frames are included in the same model request. Burst analysis is
+experimental; it may miss faults or mistake a stationary scene or lighting
+changes for a fault. It cannot verify capture timing or prove a stream healthy.
 
 ### Baseline approval
 
@@ -171,31 +178,19 @@ one for the exact region, shop code and camera name, including letter case.
 Use consistent camera names across uploads.
 
 Approval is not attributed to an authenticated user and the UI has no approval
-history view. Access must be restricted to trusted operators. Approving a
-baseline does **not** enable scene comparison, which remains **Not assessed**
-until a validated comparison engine is implemented.
+history view. Access must be restricted to trusted operators. Subsequent
+uploads include the approved baseline in the vision request.
 
-### Optional timestamp OCR (experimental)
+### Timestamp verification
 
-For a local Python deployment, install the separate AI dependencies with
-`backend\.venv\Scripts\python -m pip install -r backend\requirements-ai.txt`
-from the project root. Then set `OCR_ENABLED=true` in `backend\.env` and restart
-the API. PaddleOCR runs locally on CPU; its first use may download its public
-model files. It does not send screenshots to an API. The Docker image currently
-does not install these optional dependencies.
-
-Provide the actual capture time when uploading; the server does not substitute
-upload time. OCR reads the top-left portion of the screenshot, accepts one
-unambiguous year-first 24-hour timestamp in Hong Kong time, and compares it
-with the supplied capture time. The default drift threshold is 180 seconds,
-configurable with `OCR_DRIFT_SECONDS`; `OCR_MIN_CONFIDENCE` defaults to 0.85.
-The form captures time to the minute, so results within 60 seconds of the
-threshold are **Not assessed**. Missing capture time, unsupported or unreadable
-timestamps and recognized OCR runtime failures are also **Not assessed**, not passes.
-Other unexpected failures abort the upload. Model and
-crop accuracy, thresholds, real capture time reliability, and camera formats
-must be validated against representative labeled data before operational use;
-the project KPI has not been established.
+The vision model reads the camera timestamp; no separate OCR library is used.
+The backend compares an unambiguous `YYYY-MM-DD HH:MM:SS` reading, assumed to
+be Hong Kong time, with the supplied actual capture time. It does not
+substitute upload time. The default drift threshold is 180 seconds, configurable
+with `VISION_DRIFT_SECONDS`. Since the form captures time to the minute, results
+within 60 seconds of the threshold are **Not assessed**. Missing capture time
+and unsupported or unreadable timestamps are also **Not assessed**. The
+model's reading can be wrong and requires manual verification.
 
 The table includes evidence thumbnails, shop/region, upload time, individual
 check statuses, overall result and operator review. Filters and pagination run
@@ -222,7 +217,8 @@ API endpoints:
 
 Missing schema/configuration and database errors produce HTTP 503 and an
 explicit UI error; there is no in-memory or mock-data fallback. Invalid uploads
-return HTTP 422. Nginx allows a 20 MB multipart request; direct backend
+return HTTP 422. Vision configuration, API and response failures return HTTP
+502 and the record is not saved. Nginx allows a 20 MB multipart request; direct backend
 deployments should configure an equivalent ingress request-size limit.
 
 ## Linux Docker deployment

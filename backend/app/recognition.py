@@ -15,6 +15,7 @@ from app.inspection import (
 from app.recognition_models import (
     Baseline, RecognitionPage, RecognitionRecord, Region, ReviewStatus, ReviewUpdate,
 )
+from app.vision_analysis import AnalysisError
 
 logger = logging.getLogger(__name__)
 
@@ -57,13 +58,17 @@ def upload_screenshot(
             if not 5 <= len(burst_frames) <= 9:
                 raise InvalidScreenshot("A burst requires 6 to 10 frames including the screenshot.")
             frames = [frame.file.read(MAX_BURST_FRAME_BYTES + 1) for frame in burst_frames]
-            analysis, saved_frames = analyze_burst(content, frames, captured_at)
+            baseline = repository.get_baseline_evidence(region, shop_code.strip(), camera_name.strip())
+            analysis, saved_frames = analyze_burst(content, frames, captured_at, baseline, burst_duration_seconds)
         else:
             if burst_duration_seconds is not None:
                 raise InvalidScreenshot("Burst duration requires additional burst frames.")
-            analysis = analyze_screenshot(content, captured_at)
+            baseline = repository.get_baseline_evidence(region, shop_code.strip(), camera_name.strip())
+            analysis = analyze_screenshot(content, captured_at, baseline)
     except InvalidScreenshot as error:
         raise HTTPException(422, str(error)) from None
+    except AnalysisError:
+        raise HTTPException(502, "Vision analysis unavailable or invalid; the screenshot was not saved.") from None
     finally:
         screenshot.file.close()
         for frame in burst_frames or []:

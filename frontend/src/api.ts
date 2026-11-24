@@ -3,7 +3,7 @@ export type ReviewStatus = 'new' | 'acknowledged' | 'false_positive'
 export type Outcome = 'flagged' | 'needs_review'
 export type Region = 'Hong Kong' | 'Macau'
 
-export type ErrorCode = 'requestError' | 'storageError' | 'validationError' | 'notFoundError' |
+export type ErrorCode = 'requestError' | 'storageError' | 'analysisError' | 'validationError' | 'notFoundError' |
   'responseError' | 'fileTypeError' | 'fileSizeError' | 'imageCorruptError' | 'resolutionError' | 'animatedError'
 
 export class ApiError extends Error {
@@ -96,6 +96,7 @@ async function request<T>(
       else if (response.status === 422) message = 'Check the screenshot and required fields, then try again.'
     }
     let code: ErrorCode = response.status === 503 ? 'storageError' :
+      response.status === 502 ? 'analysisError' :
       response.status === 404 ? 'notFoundError' :
       response.status === 413 ? 'fileSizeError' :
       response.status === 422 ? 'validationError' : 'requestError'

@@ -29,7 +29,7 @@ export function RecordDrawer({ record, onClose, onSaved }: {
   const [confirmBaseline, setConfirmBaseline] = useState(false)
 
   useEffect(() => {
-    if (record.analyzer_version !== 'burst-statistics-v1') return
+    if (!['burst-statistics-v1', 'vision-llm-burst-v1'].includes(record.analyzer_version)) return
     const controller = new AbortController()
     fetchBurstInfo(record.id, controller.signal).then(setBurst).catch(cause => {
       if (controller.signal.aborted) return

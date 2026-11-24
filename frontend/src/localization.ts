@@ -58,6 +58,36 @@ export function useLanguageState() {
   }
 
   function checkExplanation(record: RecognitionRecord, check: RecognitionCheck) {
+    if (['vision-llm-v1', 'vision-llm-burst-v1'].includes(record.analyzer_version)) {
+      if (check.category === 'signal' || check.category === 'scene') {
+        if (check.explanation === 'Scene comparison requires an approved baseline. Camera movement was not assessed.') {
+          return t('visionBaselineRequired')
+        }
+        try {
+          const parsed: unknown = JSON.parse(check.explanation)
+          if (typeof parsed === 'object' && parsed !== null &&
+              'en' in parsed && 'zh_hant' in parsed && 'zh_hans' in parsed &&
+              typeof parsed.en === 'string' && typeof parsed.zh_hant === 'string' && typeof parsed.zh_hans === 'string') {
+            const key = language === 'zh-Hant' ? 'zh_hant' : language === 'zh-Hans' ? 'zh_hans' : 'en'
+            return `${parsed[key]}${check.category === 'signal' ? ` ${t('visionSignalLimitation')}` : ''}`
+          }
+        } catch (error) {
+          console.error('Invalid vision explanation:', error)
+        }
+        return check.explanation
+      }
+      const translations: Record<string, MessageKey> = {
+        'Timestamp comparison requires the actual capture time; upload time is not a substitute.': 'timestampCaptureRequired',
+        'No unambiguous supported timestamp was read. Verify the camera timestamp manually.': 'visionTimestampUnreadable',
+        'Timestamp drift is close to the threshold; verify the exact capture time manually.': 'timestampOcrBoundary',
+      }
+      const key = translations[check.explanation]
+      if (key) return t(key)
+      const drift = check.explanation.match(/^Camera timestamp differs from the supplied capture time by approximately (\d+) seconds\.$/)
+        ?? check.explanation.match(/^Camera timestamp is within the configured drift threshold \(approximately (\d+) seconds\)\.$/)
+      if (drift) return t(check.status === 'flagged' ? 'timestampOcrFlag' : 'timestampOcrPass', { seconds: drift[1] })
+      return check.explanation
+    }
     if (!['screenshot-statistics-v1', 'screenshot-ocr-v2', 'burst-statistics-v1'].includes(record.analyzer_version)) return check.explanation
     if (record.analyzer_version !== 'burst-statistics-v1' && check.category === 'signal' && check.status !== 'not_assessed') {
       return t(check.status === 'flagged' ? 'signalFlagExplanation' : 'signalPassExplanation')

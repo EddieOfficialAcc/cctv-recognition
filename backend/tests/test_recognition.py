@@ -1,6 +1,5 @@
 from datetime import datetime, timezone
 from io import BytesIO
-import os
 import unittest
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
@@ -12,7 +11,8 @@ from PIL import Image, ImageDraw
 from app.inspection import InvalidScreenshot, MAX_UPLOAD_BYTES, analyze_burst, analyze_screenshot
 from app.main import app
 from app import recognition_repository as repository
-from app.recognition_models import Baseline, RecognitionRecord
+from app.recognition_models import Baseline, RecognitionCheck, RecognitionRecord
+from app.vision_analysis import AnalysisError
 
 
 def screenshot(color="black", textured=False, format="PNG") -> bytes:
@@ -27,28 +27,32 @@ def screenshot(color="black", textured=False, format="PNG") -> bytes:
 
 
 def make_record() -> RecognitionRecord:
-    analysis = analyze_screenshot(screenshot())
     return RecognitionRecord(
         id=uuid4(), shop_code="TEST-001", camera_name="CH01", region="Hong Kong",
         filename="test.png", uploaded_at=datetime.now(timezone.utc), captured_at=None,
         width=160, height=90, outcome="flagged", review_status="new", review_note="",
-        reviewed_at=None, analyzer_version="screenshot-statistics-v1", checks=analysis.checks,
+        reviewed_at=None, analyzer_version="vision-llm-v1", checks=checks(),
     )
 
 
+def checks(signal="flagged"):
+    return [
+        RecognitionCheck(category="signal", status=signal, explanation="signal"),
+        RecognitionCheck(category="timestamp", status="not_assessed", explanation="time"),
+        RecognitionCheck(category="scene", status="not_assessed", explanation="scene"),
+    ]
+
+
 class ScreenshotTest(unittest.TestCase):
-    def test_black_and_solid_feed_flagged_but_textured_scene_is_not(self) -> None:
-        for color, textured, status in [
-            ("black", False, "flagged"), ("blue", False, "flagged"),
-            ("gray", True, "pass"), ("black", True, "pass"),
-        ]:
-            with self.subTest(color=color, textured=textured):
-                analysis = analyze_screenshot(screenshot(color, textured))
-                self.assertEqual(analysis.checks[0].status, status)
-                self.assertEqual([c.status for c in analysis.checks[1:]], ["not_assessed"] * 2)
-                with Image.open(BytesIO(analysis.evidence)) as evidence:
-                    self.assertEqual(evidence.format, "JPEG")
-                    self.assertEqual(evidence.size, (160, 90))
+    def test_screenshot_is_converted_and_sent_once(self) -> None:
+        with patch("app.inspection.analyze", return_value=checks()) as analyze:
+            analysis = analyze_screenshot(screenshot(), baseline=b"baseline")
+        self.assertEqual(analysis.analyzer_version, "vision-llm-v1")
+        self.assertEqual(analyze.call_count, 1)
+        self.assertEqual(analyze.call_args.args[2], b"baseline")
+        with Image.open(BytesIO(analysis.evidence)) as evidence:
+            self.assertEqual(evidence.format, "JPEG")
+            self.assertEqual(evidence.size, (160, 90))
 
     def test_invalid_oversized_and_unsupported_images_are_rejected(self) -> None:
         for content in (b"", b"not an image", b"x" * (MAX_UPLOAD_BYTES + 1), screenshot(format="GIF")):
@@ -68,29 +72,18 @@ class ScreenshotTest(unittest.TestCase):
         with self.assertRaisesRegex(InvalidScreenshot, "animated"):
             analyze_screenshot(buffer.getvalue())
 
-    def test_burst_flags_repeated_frames_and_alternating_brightness(self) -> None:
+    def test_burst_sends_all_frames_once(self) -> None:
         repeated = screenshot("gray", True)
-        analysis, evidence = analyze_burst(repeated, [repeated] * 5)
-        self.assertEqual(analysis.checks[0].status, "flagged")
-        self.assertIn("frozen", analysis.checks[0].explanation)
+        with patch("app.inspection.analyze", return_value=checks()) as analyze:
+            analysis, evidence = analyze_burst(repeated, [repeated] * 5, duration_seconds=2)
+        self.assertEqual(analysis.analyzer_version, "vision-llm-burst-v1")
+        self.assertEqual(analyze.call_count, 1)
+        self.assertEqual(analyze.call_args.args[1], evidence)
+        self.assertEqual(analyze.call_args.args[4], 2)
         self.assertEqual(len(evidence), 5)
         for item in evidence:
             with Image.open(BytesIO(item)) as image:
                 self.assertEqual(image.format, "JPEG")
-
-        def striped(low: int, high: int) -> bytes:
-            image = Image.new("L", (160, 90), low)
-            draw = ImageDraw.Draw(image)
-            for x in range(0, 160, 16):
-                draw.rectangle((x, 0, x + 7, 89), fill=high)
-            output = BytesIO()
-            image.save(output, format="PNG")
-            return output.getvalue()
-
-        dark, bright = striped(40, 80), striped(180, 220)
-        analysis, _ = analyze_burst(dark, [bright, dark, bright, dark, bright])
-        self.assertEqual(analysis.checks[0].status, "flagged")
-        self.assertIn("flicker", analysis.checks[0].explanation)
 
     def test_burst_rejects_bad_count_size_and_mismatched_frames(self) -> None:
         first = screenshot("gray", True)
@@ -103,28 +96,16 @@ class ScreenshotTest(unittest.TestCase):
             with self.subTest(count=len(frames)), self.assertRaises(InvalidScreenshot):
                 analyze_burst(first, frames)
 
-    def test_burst_preserves_blank_alert_and_does_not_certify_motion(self) -> None:
-        blank = screenshot()
-        analysis, _ = analyze_burst(blank, [blank] * 5)
-        self.assertEqual(analysis.checks[0].status, "flagged")
-        self.assertIn("black or blank", analysis.checks[0].explanation)
-
-        frames = []
-        for offset in range(6):
-            image = Image.new("RGB", (160, 90), "gray")
-            ImageDraw.Draw(image).rectangle((25 + offset * 12, 10, 40 + offset * 12, 80), fill="white")
-            output = BytesIO()
-            image.save(output, format="PNG")
-            frames.append(output.getvalue())
-        analysis, _ = analyze_burst(frames[0], frames[1:])
-        self.assertEqual(analysis.checks[0].status, "pass")
-        self.assertIn("not ruled out", analysis.checks[0].explanation)
-
-
 class RecognitionApiTest(unittest.TestCase):
     def setUp(self) -> None:
         self.client = TestClient(app)
         self.addCleanup(self.client.close)
+        baseline = patch("app.recognition.repository.get_baseline_evidence", return_value=None)
+        self.baseline = baseline.start()
+        self.addCleanup(baseline.stop)
+        analyzer = patch("app.inspection.analyze", return_value=checks())
+        self.analyzer = analyzer.start()
+        self.addCleanup(analyzer.stop)
 
     def upload(self, content=None, **fields):
         data = {"shop_code": " TEST-001 ", "camera_name": " CH01 ", "region": "Hong Kong"}
@@ -153,22 +134,29 @@ class RecognitionApiTest(unittest.TestCase):
         self.assertEqual(image.headers["cache-control"], "no-store")
 
     def test_normal_screenshot_is_never_reported_as_completely_healthy(self) -> None:
+        self.analyzer.return_value = checks("pass")
         with patch("app.recognition.repository.save_record"):
             response = self.upload(screenshot("gray", True))
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.json()["outcome"], "needs_review")
         self.assertIsNone(response.json()["captured_at"])
 
-    @patch.dict(os.environ, {"OCR_ENABLED": "true", "OCR_DRIFT_SECONDS": "180"})
-    def test_upload_uses_capture_time_for_timestamp_ocr(self) -> None:
-        with patch("app.recognition.repository.save_record") as save:
-            with patch("app.timestamp_ocr._read_text", return_value="2026-11-24 10:35:00"):
-                response = self.upload(screenshot("gray", True), captured_at="2026-11-24T10:30:00+08:00")
+    def test_upload_supplies_baseline_and_capture_time_to_vision(self) -> None:
+        self.baseline.return_value = b"baseline"
+        with patch("app.recognition.repository.save_record"):
+            response = self.upload(screenshot("gray", True), captured_at="2026-11-24T10:30:00+08:00")
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.json()["analyzer_version"], "screenshot-ocr-v2")
-        self.assertEqual(response.json()["checks"][1]["status"], "flagged")
-        self.assertEqual(response.json()["outcome"], "flagged")
-        self.assertEqual(save.call_args.args[0].checks[1].status, "flagged")
+        self.baseline.assert_called_once_with("Hong Kong", "TEST-001", "CH01")
+        self.assertEqual(self.analyzer.call_args.args[2], b"baseline")
+        self.assertEqual(self.analyzer.call_args.args[3].utcoffset().total_seconds(), 8 * 3600)
+
+    def test_analysis_failure_does_not_save(self) -> None:
+        self.analyzer.side_effect = AnalysisError("private details")
+        with patch("app.recognition.repository.save_record") as save:
+            response = self.upload()
+        self.assertEqual(response.status_code, 502)
+        self.assertNotIn("private details", response.text)
+        save.assert_not_called()
 
     def test_invalid_upload_and_naive_capture_time_never_reach_storage(self) -> None:
         with patch("app.recognition.repository.save_record") as save:
@@ -194,7 +182,7 @@ class RecognitionApiTest(unittest.TestCase):
                 "/api/recognitions", data={**data, "burst_duration_seconds": "2"}, files=files,
             )
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.json()["analyzer_version"], "burst-statistics-v1")
+        self.assertEqual(response.json()["analyzer_version"], "vision-llm-burst-v1")
         self.assertEqual(response.json()["outcome"], "flagged")
         record, primary, extra, duration = save.call_args.args
         self.assertEqual((len(extra), duration), (5, 2.0))
@@ -270,6 +258,19 @@ class RecognitionApiTest(unittest.TestCase):
 
 
 class RecognitionRepositoryTest(unittest.TestCase):
+    def test_baseline_evidence_lookup_is_camera_scoped_and_parameterized(self) -> None:
+        connection = MagicMock()
+        cursor = connection.cursor.return_value
+        cursor.execute.return_value = cursor
+        cursor.fetchone.return_value = (b"baseline",)
+        with patch("app.recognition_repository.DatabaseSettings"):
+            with patch("app.recognition_repository.connect", return_value=connection):
+                evidence = repository.get_baseline_evidence("Hong Kong", "shop", "camera")
+        self.assertEqual(evidence, b"baseline")
+        query = cursor.execute.call_args
+        self.assertEqual(query.args[1:], ("Hong Kong", "shop", "camera"))
+        self.assertIn("COLLATE Latin1_General_100_BIN2", query.args[0])
+
     def test_baseline_approval_uses_record_metadata_and_lookup_is_camera_scoped(self) -> None:
         connection = MagicMock()
         cursor = connection.cursor.return_value
