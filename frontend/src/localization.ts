@@ -58,11 +58,35 @@ export function useLanguageState() {
   }
 
   function checkExplanation(record: RecognitionRecord, check: RecognitionCheck) {
-    if (record.analyzer_version !== 'screenshot-statistics-v1') return check.explanation
-    if (check.category === 'signal' && check.status !== 'not_assessed') {
+    if (!['screenshot-statistics-v1', 'screenshot-ocr-v2', 'burst-statistics-v1'].includes(record.analyzer_version)) return check.explanation
+    if (record.analyzer_version !== 'burst-statistics-v1' && check.category === 'signal' && check.status !== 'not_assessed') {
       return t(check.status === 'flagged' ? 'signalFlagExplanation' : 'signalPassExplanation')
     }
-    if (check.category === 'timestamp' && check.status === 'not_assessed') return t('timestampExplanation')
+    if (record.analyzer_version === 'burst-statistics-v1' && check.category === 'signal') {
+      const translations: Record<string, MessageKey> = {
+        'Possible frozen or repeated frames. A stationary scene can look similar; verify the live feed.': 'burstRepeated',
+        'Possible brightness flicker detected across the burst. Verify the live feed.': 'burstFlicker',
+        'No black/blank, repeated-frame or flicker pattern was detected in this burst. No-signal overlays, freeze and flicker are not ruled out.': 'burstNoPattern',
+        'Possible black or blank feed. Confirm against the original camera; an unlit scene can look similar. Confirm the burst and live feed manually.': 'burstBlank',
+      }
+      const key = translations[check.explanation]
+      if (key) return t(key)
+    }
+    if (record.analyzer_version === 'screenshot-statistics-v1' && check.category === 'timestamp' && check.status === 'not_assessed') return t('timestampExplanation')
+    if (record.analyzer_version !== 'screenshot-statistics-v1' && check.category === 'timestamp') {
+      const translations: Record<string, MessageKey> = {
+        'Timestamp OCR is not configured. Manual verification is required; upload time must not be used as the camera capture time.': 'timestampExplanation',
+        'Timestamp comparison requires the actual capture time; upload time is not a substitute.': 'timestampCaptureRequired',
+        'Timestamp OCR is unavailable or failed. Check the server logs and verify the camera timestamp manually.': 'timestampOcrUnavailable',
+        'No unambiguous supported timestamp was read with sufficient confidence. Verify the camera timestamp manually.': 'timestampOcrUnreadable',
+        'Timestamp drift is close to the threshold; verify the exact capture time manually.': 'timestampOcrBoundary',
+      }
+      const key = translations[check.explanation]
+      if (key) return t(key)
+      const drift = check.explanation.match(/^Camera timestamp differs from the supplied capture time by approximately (\d+) seconds\.$/)
+        ?? check.explanation.match(/^Camera timestamp is within the configured drift threshold \(approximately (\d+) seconds\)\.$/)
+      if (drift) return t(check.status === 'flagged' ? 'timestampOcrFlag' : 'timestampOcrPass', { seconds: drift[1] })
+    }
     if (check.category === 'scene' && check.status === 'not_assessed') return t('sceneExplanation')
     return check.explanation
   }

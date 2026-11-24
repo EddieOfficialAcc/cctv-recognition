@@ -26,6 +26,30 @@ BEGIN
     CREATE INDEX IX_recognition_review
         ON dbo.recognition_records (review_status, outcome);
 END;
+IF OBJECT_ID(N'dbo.recognition_burst_frames', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.recognition_burst_frames (
+        record_id UNIQUEIDENTIFIER NOT NULL
+            REFERENCES dbo.recognition_records(id) ON DELETE CASCADE,
+        frame_index TINYINT NOT NULL CHECK (frame_index BETWEEN 1 AND 9),
+        duration_seconds FLOAT NOT NULL CHECK (duration_seconds >= 1.5 AND duration_seconds <= 2.0),
+        evidence VARBINARY(MAX) NOT NULL,
+        PRIMARY KEY (record_id, frame_index)
+    );
+END;
+IF OBJECT_ID(N'dbo.recognition_baselines', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.recognition_baselines (
+        id BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        record_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.recognition_records(id),
+        region NVARCHAR(20) NOT NULL,
+        shop_code NVARCHAR(50) NOT NULL,
+        camera_name NVARCHAR(100) NOT NULL,
+        approved_at DATETIME2 NOT NULL
+    );
+    CREATE INDEX IX_recognition_baseline_camera
+        ON dbo.recognition_baselines (region, shop_code, camera_name, id DESC);
+END;
 IF OBJECT_ID(N'dbo.recognition_checks', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.recognition_checks (

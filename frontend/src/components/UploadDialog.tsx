@@ -10,6 +10,7 @@ export function UploadDialog({ onClose, onUploaded }: {
 }) {
   const { t, errorMessage } = useLocale()
   const [file, setFile] = useState<File | null>(null)
+  const [burstFrames, setBurstFrames] = useState<File[]>([])
   const [preview, setPreview] = useState('')
   const [dragging, setDragging] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -40,6 +41,8 @@ export function UploadDialog({ onClose, onUploaded }: {
     if (!file || busy) return
     const body = new FormData(event.currentTarget)
     body.set('screenshot', file)
+    for (const frame of burstFrames) body.append('burst_frames', frame)
+    if (burstFrames.length === 0) body.delete('burst_duration_seconds')
     const captured = body.get('captured_at')
     if (typeof captured === 'string' && captured) {
       body.set('captured_at', `${captured}:00+08:00`)
@@ -99,6 +102,23 @@ export function UploadDialog({ onClose, onUploaded }: {
             <input name="captured_at" type="datetime-local" />
             <span className="field-hint">{t('captureTimeHint')}</span>
           </label>
+        </fieldset>
+        <fieldset disabled={busy} className="form-grid">
+          <label>{t('burstFrames')} <span className="optional">{t('optional')}</span>
+            <input type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={event => {
+              const files = Array.from(event.target.files ?? []).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
+              if (files.length && (files.length < 5 || files.length > 9 || files.some(frame =>
+                !['image/jpeg', 'image/png', 'image/webp'].includes(frame.type) ||
+                frame.size === 0 || frame.size > 1024 * 1024))) {
+                setError('burstFilesError'); setBurstFrames([]); event.target.value = ''
+              } else { setError(null); setBurstFrames(files) }
+            }} />
+            <span className="field-hint">{t('burstFramesHint')}</span>
+          </label>
+          {burstFrames.length > 0 && <label>{t('burstDuration')}
+            <input name="burst_duration_seconds" type="number" min="1.5" max="2" step="0.1" required />
+            <span className="field-hint">{t('burstDurationHint')}</span>
+          </label>}
         </fieldset>
         <div className="notice"><Icon name="info" /><p>{t('uploadLimitations')}</p></div>
         {error && <div className="error-message" role="alert">{errorMessage(error)}</div>}

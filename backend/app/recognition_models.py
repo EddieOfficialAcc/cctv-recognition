@@ -51,3 +51,8 @@ class RecognitionPage(BaseModel):
 class ReviewUpdate(BaseModel):
     status: ReviewStatus
     note: str = Field(default="", max_length=1000)
+
+
+class Baseline(BaseModel):
+    record_id: UUID
+    approved_at: datetime

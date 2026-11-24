@@ -40,6 +40,11 @@ export interface RecognitionRecord {
   checks: RecognitionCheck[]
 }
 
+export interface Baseline {
+  record_id: string
+  approved_at: string
+}
+
 export interface RecognitionPage {
   records: RecognitionRecord[]
   total: number
@@ -125,6 +130,29 @@ export function saveReview(id: string, status: ReviewStatus, note: string) {
 
 export function evidenceUrl(id: string) {
   return `/api/recognitions/${id}/evidence`
+}
+
+export function burstFrameUrl(id: string, index: number) {
+  return `/api/recognitions/${id}/burst/${index}`
+}
+
+export function fetchBurstInfo(id: string, signal: AbortSignal) {
+  return request(`/api/recognitions/${id}/burst`, (value): value is { frame_count: number; duration_seconds: number } =>
+    isObject(value) && typeof value.frame_count === 'number' && Number.isInteger(value.frame_count) &&
+    value.frame_count >= 6 && value.frame_count <= 10 && typeof value.duration_seconds === 'number' &&
+    value.duration_seconds >= 1.5 && value.duration_seconds <= 2, { signal })
+}
+
+function isBaseline(value: unknown): value is Baseline {
+  return isObject(value) && typeof value.record_id === 'string' && typeof value.approved_at === 'string'
+}
+
+export function fetchBaseline(id: string) {
+  return request(`/api/recognitions/${id}/baseline`, isBaseline)
+}
+
+export function approveBaseline(id: string) {
+  return request(`/api/recognitions/${id}/baseline`, isBaseline, { method: 'POST' })
 }
 
 export const reviewKeys = {

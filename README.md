@@ -12,8 +12,10 @@ Vite and Tailwind CSS frontend and a Python FastAPI backend.
 
 The screenshot workflow supports validated uploads, persisted recognition
 results and evidence, a searchable/paginated inspection table, and operator
-review with notes. Direct device connections, automated capture, authentication,
-timestamp OCR, and baseline scene comparison are not yet implemented.
+review with notes. Experimental timestamp OCR and manual burst checks are
+optional, and operators can approve baseline evidence. Direct device
+connections, automated capture, authentication, and baseline scene comparison
+are not yet implemented.
 The health endpoint checks the API process, not any camera or database.
 
 ## Local development (Windows PowerShell)
@@ -98,8 +100,11 @@ Set-Location backend
 
 This idempotent setup creates `dbo.recognition_records` (camera/shop metadata,
 upload and optional capture times, overall result, review status/note/time,
-analyzer version, and JPEG evidence) and `dbo.recognition_checks` (one row per
-signal, timestamp, and scene check). It does not replace existing tables.
+analyzer version, and JPEG evidence), `dbo.recognition_checks` (one row per
+signal, timestamp, and scene check), `dbo.recognition_burst_frames` (additional
+burst evidence and duration), and `dbo.recognition_baselines` (baseline
+approvals). It does not replace existing tables. Re-run the schema setup after
+upgrading an existing deployment to add the burst and baseline tables.
 Runtime operations require SELECT, INSERT and UPDATE permissions on these
 tables, not schema administration permissions. Evidence and all three check
 results are inserted in one transaction; a failed save never returns success.
@@ -122,20 +127,75 @@ from future/unknown analyzer versions remain as originally recorded.
 For manual SQL setup, open `backend/app/schema.sql` in your SQL Server client
 and execute it against the configured application database. The Python setup
 command reads that same file, so both installation methods use one schema.
-The script creates `dbo.recognition_records` and `dbo.recognition_checks`
-only if absent, plus their indexes and foreign key. `NVARCHAR` metadata
+The script creates all four recognition tables only if absent, plus their
+indexes and foreign keys. `NVARCHAR` metadata
 supports both Traditional and Simplified Chinese. No database changes happen
 merely by opening the UI or changing its language.
 
 The initial `screenshot-statistics-v1` analyzer screens for possible black/blank
 feeds using central-image luminance and variance. This is a heuristic, not a
 validated fulfillment of the PRD's accuracy KPIs. Dark scenes can be false
-positives. No-signal text overlays, freeze, and flicker are not verified.
-Timestamp OCR and scene comparison are explicitly **Not assessed**, with reasons
-in the review drawer. A screenshot with no detected black/blank pattern is
-**Needs verification**, never certified healthy. Upload time is not substituted
-for the camera's capture time. OCR requires a configured engine; displacement
-checks require a verified baseline and comparison engine.
+positives. No-signal text overlays, freeze, and flicker are not verified for a
+single image. Timestamp OCR is disabled by default; scene comparison is
+explicitly **Not assessed**, with reasons in the review drawer. A screenshot
+with no detected black/blank pattern is **Needs verification**, never certified
+healthy. Upload time is not substituted for the camera's capture time. OCR
+requires a configured engine; displacement checks require a verified baseline
+and comparison engine.
+
+### Optional manual burst checks (experimental)
+
+Upload the first frame as the screenshot and choose 5–9 additional frames in
+**Additional burst frames**. Name the additional files in capture order; the
+interface sorts them by filename. Supply the actual elapsed time between the
+first and last frame, from 1.5 to 2 seconds. Additional frames must each be
+at most 1 MB, have the same dimensions as the first image, and use the accepted
+image formats. All frames and the duration are saved with the record in one
+transaction and can be reviewed in the record drawer.
+
+The Pillow-based prototype checks for near-identical consecutive frames and
+pronounced alternating brightness changes in the central image. It can miss
+faults and can flag a stationary scene or normal lighting changes. It does not
+verify acquisition timing or prove that a stream is healthy; review live feeds
+and validate thresholds using labeled camera bursts before operational use.
+It is not the planned OpenCV-based production detector.
+
+### Baseline approval
+
+In a record's review drawer, use **Load current baseline** to see the latest
+approved reference for that camera. To approve the record's first image as a
+new reference, choose **Approve this screenshot as baseline** and confirm.
+Each approval is appended to the database; it references the original evidence
+rather than replacing it. The current reference is the most recently approved
+one for the exact region, shop code and camera name, including letter case.
+Use consistent camera names across uploads.
+
+Approval is not attributed to an authenticated user and the UI has no approval
+history view. Access must be restricted to trusted operators. Approving a
+baseline does **not** enable scene comparison, which remains **Not assessed**
+until a validated comparison engine is implemented.
+
+### Optional timestamp OCR (experimental)
+
+For a local Python deployment, install the separate AI dependencies with
+`backend\.venv\Scripts\python -m pip install -r backend\requirements-ai.txt`
+from the project root. Then set `OCR_ENABLED=true` in `backend\.env` and restart
+the API. PaddleOCR runs locally on CPU; its first use may download its public
+model files. It does not send screenshots to an API. The Docker image currently
+does not install these optional dependencies.
+
+Provide the actual capture time when uploading; the server does not substitute
+upload time. OCR reads the top-left portion of the screenshot, accepts one
+unambiguous year-first 24-hour timestamp in Hong Kong time, and compares it
+with the supplied capture time. The default drift threshold is 180 seconds,
+configurable with `OCR_DRIFT_SECONDS`; `OCR_MIN_CONFIDENCE` defaults to 0.85.
+The form captures time to the minute, so results within 60 seconds of the
+threshold are **Not assessed**. Missing capture time, unsupported or unreadable
+timestamps and recognized OCR runtime failures are also **Not assessed**, not passes.
+Other unexpected failures abort the upload. Model and
+crop accuracy, thresholds, real capture time reliability, and camera formats
+must be validated against representative labeled data before operational use;
+the project KPI has not been established.
 
 The table includes evidence thumbnails, shop/region, upload time, individual
 check statuses, overall result and operator review. Filters and pagination run
@@ -151,11 +211,18 @@ API endpoints:
 - `GET /api/recognitions`: search, outcome, region, review-status and pagination.
 - `GET /api/recognitions/{id}`: saved record and individual checks.
 - `GET /api/recognitions/{id}/evidence`: JPEG evidence, with no-store caching.
+- `GET /api/recognitions/{id}/burst`: frame count and supplied burst duration.
+- `GET /api/recognitions/{id}/burst/{index}`: additional JPEG frame, numbered
+  from 1 after the primary evidence frame.
+- `GET /api/recognitions/{id}/baseline`: latest baseline for the same camera;
+  returns HTTP 404 when none exists.
+- `POST /api/recognitions/{id}/baseline`: append an approval for that record's
+  primary evidence as the camera baseline.
 - `PATCH /api/recognitions/{id}/review`: review status and optional note.
 
 Missing schema/configuration and database errors produce HTTP 503 and an
 explicit UI error; there is no in-memory or mock-data fallback. Invalid uploads
-return HTTP 422. Nginx allows an 11 MB multipart request; direct backend
+return HTTP 422. Nginx allows a 20 MB multipart request; direct backend
 deployments should configure an equivalent ingress request-size limit.
 
 ## Linux Docker deployment

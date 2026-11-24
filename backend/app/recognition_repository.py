@@ -6,7 +6,7 @@ import pyodbc
 
 from app.database import DatabaseSettings, connect
 from app.recognition_models import (
-    RecognitionCheck, RecognitionPage, RecognitionRecord, RecognitionSummary, ReviewUpdate,
+    Baseline, RecognitionCheck, RecognitionPage, RecognitionRecord, RecognitionSummary, ReviewUpdate,
 )
 
 COLUMNS = (
@@ -44,7 +44,12 @@ def _records(cursor: pyodbc.Cursor, rows: list[pyodbc.Row]) -> list[RecognitionR
     return result
 
 
-def save_record(record: RecognitionRecord, evidence: bytes) -> None:
+def save_record(
+    record: RecognitionRecord, evidence: bytes,
+    burst_frames: list[bytes] | None = None, burst_duration_seconds: float | None = None,
+) -> None:
+    if burst_frames and burst_duration_seconds is None:
+        raise ValueError("A burst duration is required when saving burst frames.")
     with closing(connect(DatabaseSettings())) as connection:
         connection.autocommit = False
         try:
@@ -66,6 +71,13 @@ def save_record(record: RecognitionRecord, evidence: bytes) -> None:
                         "(record_id, category, status, explanation) VALUES (?, ?, ?, ?)",
                         str(record.id), check.category, check.status, check.explanation,
                     )
+                if burst_frames:
+                    for index, frame in enumerate(burst_frames, 1):
+                        cursor.execute(
+                            "INSERT INTO dbo.recognition_burst_frames "
+                            "(record_id, frame_index, duration_seconds, evidence) VALUES (?, ?, ?, ?)",
+                            str(record.id), index, burst_duration_seconds, pyodbc.Binary(frame),
+                        )
             connection.commit()
         except pyodbc.Error:
             connection.rollback()
@@ -129,6 +141,59 @@ def get_evidence(record_id: UUID) -> bytes | None:
                 "SELECT evidence FROM dbo.recognition_records WHERE id = ?", str(record_id),
             ).fetchone()
             return bytes(row[0]) if row else None
+
+
+def get_burst_info(record_id: UUID) -> tuple[int, float] | None:
+    with closing(connect(DatabaseSettings())) as connection:
+        with closing(connection.cursor()) as cursor:
+            row = cursor.execute(
+                "SELECT COUNT(f.frame_index), MAX(f.duration_seconds) "
+                "FROM dbo.recognition_records r LEFT JOIN dbo.recognition_burst_frames f "
+                "ON r.id = f.record_id WHERE r.id = ? GROUP BY r.id",
+                str(record_id),
+            ).fetchone()
+            return (int(row[0]) + 1, float(row[1])) if row and row[0] else None
+
+
+def get_burst_frame(record_id: UUID, frame_index: int) -> bytes | None:
+    with closing(connect(DatabaseSettings())) as connection:
+        with closing(connection.cursor()) as cursor:
+            row = cursor.execute(
+                "SELECT evidence FROM dbo.recognition_burst_frames WHERE record_id = ? AND frame_index = ?",
+                str(record_id), frame_index,
+            ).fetchone()
+            return bytes(row[0]) if row else None
+
+
+def approve_baseline(record_id: UUID) -> Baseline | None:
+    approved_at = datetime.now(timezone.utc)
+    with closing(connect(DatabaseSettings())) as connection:
+        with closing(connection.cursor()) as cursor:
+            row = cursor.execute(
+                "INSERT INTO dbo.recognition_baselines "
+                "(record_id, region, shop_code, camera_name, approved_at) "
+                "OUTPUT inserted.record_id, inserted.approved_at "
+                "SELECT id, region, shop_code, camera_name, ? "
+                "FROM dbo.recognition_records WHERE id = ?",
+                approved_at.replace(tzinfo=None), str(record_id),
+            ).fetchone()
+            return Baseline(record_id=row[0], approved_at=row[1].replace(tzinfo=timezone.utc)) if row else None
+
+
+def get_baseline(record_id: UUID) -> Baseline | None:
+    with closing(connect(DatabaseSettings())) as connection:
+        with closing(connection.cursor()) as cursor:
+            row = cursor.execute(
+                "SELECT TOP 1 b.record_id, b.approved_at "
+                "FROM dbo.recognition_records r "
+                "JOIN dbo.recognition_baselines b ON "
+                "b.region COLLATE Latin1_General_100_BIN2 = r.region COLLATE Latin1_General_100_BIN2 "
+                "AND b.shop_code COLLATE Latin1_General_100_BIN2 = r.shop_code COLLATE Latin1_General_100_BIN2 "
+                "AND b.camera_name COLLATE Latin1_General_100_BIN2 = r.camera_name COLLATE Latin1_General_100_BIN2 "
+                "WHERE r.id = ? ORDER BY b.id DESC",
+                str(record_id),
+            ).fetchone()
+            return Baseline(record_id=row[0], approved_at=row[1].replace(tzinfo=timezone.utc)) if row else None
 
 
 def update_review(record_id: UUID, update: ReviewUpdate) -> RecognitionRecord | None:
