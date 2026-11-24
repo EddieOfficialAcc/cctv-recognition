@@ -1,0 +1,18 @@
+# Local project materials may contain device details and credentials.
+/Project Description/
+/Sample Camera Photos/
+
+# Frontend
+/frontend/node_modules/
+/frontend/dist/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# Local configuration
+.env
+.env.*
+!.env.example
