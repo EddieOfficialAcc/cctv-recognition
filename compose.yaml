@@ -3,7 +3,7 @@ services:
     build:
       context: ./backend
     env_file:
-      - ./backend/.env
+      - ${BACKEND_ENV_FILE:-./backend/.env}
     environment:
       DB_DRIVER: ODBC Driver 18 for SQL Server
     restart: unless-stopped

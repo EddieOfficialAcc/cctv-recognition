@@ -1,0 +1,10 @@
+services:
+  backend:
+    networks:
+      - default
+      - sql
+
+networks:
+  sql:
+    external: true
+    name: cctv-sql

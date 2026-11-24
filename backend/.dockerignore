@@ -3,3 +3,4 @@
 !requirements.txt
 !app/
 !app/**/*.py
+!app/schema.sql

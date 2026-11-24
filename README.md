@@ -227,31 +227,125 @@ deployments should configure an equivalent ingress request-size limit.
 
 ## Linux Docker deployment
 
-Install Docker Engine and the Docker Compose plugin on the Linux server. From
-the project root, configure `backend/.env` as described above, then build and
-start both services:
+The frontend and backend run in separate containers. The existing
+`sqlserver-db` container remains independent; Compose does not create, stop,
+or delete it. **The application has no authentication.** Restrict port 8080
+to trusted internal users or a VPN and configure HTTPS at a trusted ingress.
+Do not expose it directly to the internet. Also restrict the already
+published SQL Server port 1433 using appropriate network controls.
+
+Install Docker Engine, a recent Docker Compose plugin supporting `up --wait`,
+Git and curl on the Linux server. The examples below assume the existing
+SQL Server container is named `sqlserver-db`, SSH uses port 22, and the
+deployment account can use Docker. Docker access grants host-level privileges;
+use a dedicated, trusted account. Clone this repository on the server for
+initial setup, and run the following from the clone's root:
 
 ```sh
-docker compose up --build -d
-docker compose ps
+sudo install -d -o "$USER" -m 700 /opt/cctv-recognition
+sudo install -d -o "$USER" -m 700 /opt/cctv-recognition/releases
+umask 077
+if [ ! -e /opt/cctv-recognition/backend.env ]; then
+  cp backend/.env.example /opt/cctv-recognition/backend.env
+fi
+# Edit /opt/cctv-recognition/backend.env privately.
 ```
 
-Visit `http://SERVER_ADDRESS:8080`. The frontend container serves the built
-application and proxies `/api/` to the backend container. Only the frontend port
-is published; the backend is reachable on the Compose network. Check the
-connection at `http://SERVER_ADDRESS:8080/api/health`. View logs with
-`docker compose logs -f` and stop the services with `docker compose down`.
-Check SQL connectivity at `http://SERVER_ADDRESS:8080/api/health/database`.
-Compose injects the database configuration at runtime and selects Driver 18,
-which the backend image installs. The database host must be reachable from the
-container; use a reachable server address rather than a host-local tunnel.
+Set `DB_HOST=sqlserver-db`, `DB_PORT=1433`, and the database name and dedicated
+SQL login credentials in that file. Create the database and application login
+in SQL Server first; the application does not create them. The file stays
+outside the release directory and Git. Compose parses its env file, so quote
+values as needed according to Compose env-file syntax. With certificate
+validation enabled, the server certificate must be trusted by the backend
+container and valid for `sqlserver-db`; alternatively use a DNS name matching
+the certificate and reachable on the shared network. Set
+`DB_TRUST_SERVER_CERTIFICATE=true` only when accepting the security risks of a
+self-signed certificate on a trusted network.
 
-The containers provide a deployment foundation, not a production security
-setup. Configure HTTPS, access controls and any required firewall rules before
-exposing the service. Recognition persistence is implemented, but authentication,
-device integrations and automated retention are not. Restrict access to both
-records and evidence; do not expose this unauthenticated internal workspace
-publicly. Apply the recognition schema before using uploads.
+Create a dedicated network and attach the existing SQL container once:
+
+```sh
+docker network create cctv-sql
+docker network connect cctv-sql sqlserver-db
+```
+
+If the network or connection already exists, inspect it with
+`docker network inspect cctv-sql` instead of creating it again. Reattach SQL
+Server if its container is replaced. The backend joins this network as well
+as the private application network; SQL Server's published host port is not
+used by the application. Neither the database nor its volumes are managed by
+this Compose project.
+
+Build and start the application:
+
+```sh
+export BACKEND_ENV_FILE=/opt/cctv-recognition/backend.env
+docker compose -p cctv-recognition -f compose.yaml -f compose.server.yaml up -d --build --wait
+docker compose -p cctv-recognition -f compose.yaml -f compose.server.yaml ps
+curl -fsS http://127.0.0.1:8080/api/health/database
+```
+
+The database health check verifies connectivity, not the recognition schema.
+Apply `backend/app/schema.sql` to the application database using an authorized
+SQL client before using uploads, and grant the runtime login SELECT, INSERT and
+UPDATE on the four recognition tables. Alternatively, run the schema command
+in a one-off container with a separately provisioned administrator env file:
+
+```sh
+BACKEND_ENV_FILE=/secure/path/schema-admin.env docker compose -p cctv-recognition \
+  -f compose.yaml -f compose.server.yaml run --rm --no-deps backend python -m app.schema
+```
+
+Keep that file restricted and remove it when no longer needed. Reapply the
+additive schema when a release requires it; deployment does not run schema
+changes automatically. Back up the database before upgrades.
+
+Visit `http://SERVER_ADDRESS:8080` only over the restricted internal network.
+Nginx serves the frontend and proxies `/api/` to the backend; only the frontend
+port is published by Compose. For logs or shutdown, run the same Compose command
+with `logs -f` or `down` instead of `up ...`. `down` does not stop the
+independently managed SQL Server container. The API liveness check is
+`/api/health`; `/api/health/database` checks database connectivity.
+
+### GitHub Actions CI/CD
+
+The workflow runs backend tests, frontend lint/build/localization tests and
+both Docker builds on pull requests and pushes to `main`. After checks pass on
+`main`, it deploys that exact commit over SSH to the Linux server, rebuilds the
+images there, waits for container health, and checks database connectivity.
+The server must be reachable from GitHub-hosted runners on SSH port 22; the
+web application can remain internal. Use a tightly restricted network path
+and consider the implications of allowing GitHub-hosted runner addresses.
+
+Before enabling automatic deployment:
+
+1. Complete the server setup above, including the network, runtime env file,
+   database schema, firewall and backup. Confirm a manual deployment works.
+2. Set up a dedicated deployment SSH key and account. The account needs write
+   access to `/opt/cctv-recognition/releases` and Docker access. Verify the
+   server's SSH host-key fingerprint through a trusted channel. For example,
+   compare `ssh-keyscan -t ed25519 SERVER_ADDRESS | ssh-keygen -lf -` with
+   `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` run on the server.
+3. In the repository's `production` environment, add these Actions secrets:
+   `DEPLOY_HOST` (SSH host), `DEPLOY_USER`, `DEPLOY_SSH_PRIVATE_KEY` (the
+   deploy key), and `DEPLOY_SSH_KNOWN_HOSTS` (a verified OpenSSH known_hosts
+   line for that host). Never put the SQL password or SSH key in the repository.
+   Configure required reviewers on the environment if deployment approval is
+   desired and supported by your GitHub plan.
+4. Merge the workflow into `main`. It can also be started manually from the
+   Actions tab on `main`. A newer commit on `main` causes an older waiting
+   deployment to be skipped.
+
+Each deployment keeps its source under
+`/opt/cctv-recognition/releases/<commit-sha>`; images are rebuilt from that
+source, so they are not byte-identical to the CI build. Builds require network
+access to package registries. A failed deployment or database health check
+does not automatically roll back; inspect the Compose logs and redeploy a
+known-good release manually if needed, by changing into its release directory
+and rerunning the Compose `up -d --build --wait` command above with
+`BACKEND_ENV_FILE` exported. Old release directories and Docker images are not
+automatically pruned. Schema changes must remain compatible with the
+application version during upgrades and any rollback.
 
 ## Checks
 
