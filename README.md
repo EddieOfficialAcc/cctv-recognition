@@ -10,10 +10,11 @@ Vite and Tailwind CSS frontend and a Python FastAPI backend.
 - `backend/app/` - FastAPI application.
 - `backend/tests/` - backend tests.
 
-This is a foundation only: device connections, inspection workers,
-authentication, reporting and review workflows have not been implemented.
-SQL Server connectivity is available; no application tables or migrations are
-created. The health endpoint checks the API process, not any camera or database.
+The screenshot workflow supports validated uploads, persisted recognition
+results and evidence, a searchable/paginated inspection table, and operator
+review with notes. Direct device connections, automated capture, authentication,
+timestamp OCR, and baseline scene comparison are not yet implemented.
+The health endpoint checks the API process, not any camera or database.
 
 ## Local development (Windows PowerShell)
 
@@ -85,6 +86,78 @@ Then set `DB_HOST=127.0.0.1` and `DB_PORT=11433` for the locally running backend
 Keep the SSH terminal open; enter its password interactively. Inside Docker,
 `127.0.0.1` is the container itself, not the host or a database-client tunnel.
 
+## Screenshot recognition & records
+
+After configuring SQL Server, explicitly apply the additive schema using a login
+authorized to create tables and indexes:
+
+```powershell
+Set-Location backend
+.\.venv\Scripts\python -m app.schema
+```
+
+This idempotent setup creates `dbo.recognition_records` (camera/shop metadata,
+upload and optional capture times, overall result, review status/note/time,
+analyzer version, and JPEG evidence) and `dbo.recognition_checks` (one row per
+signal, timestamp, and scene check). It does not replace existing tables.
+Runtime operations require SELECT, INSERT and UPDATE permissions on these
+tables, not schema administration permissions. Evidence and all three check
+results are inserted in one transaction; a failed save never returns success.
+
+In the application, choose **Upload screenshot**, provide shop, camera and
+region, and optionally enter the actual capture time in Hong Kong time.
+JPEG, PNG and single-frame WebP images are accepted up to 10 MB and 20 MP.
+Images are decoded and re-encoded as JPEG without original file metadata.
+Upload and capture times are stored in UTC and displayed in Asia/Hong_Kong.
+Screenshots are not automatically grouped into bursts or used as baselines.
+
+The interface offers **English**, **Traditional Chinese (繁體中文)** and
+**Simplified Chinese (简体中文)** using the header language selector. The choice
+is saved in browser local storage and restored on reload. Labels, accessible
+names, validation/error messages, current analyzer explanations and displayed
+dates change language without modifying database values. All dates remain in
+Hong Kong time. Shop/camera names, filenames, operator notes and explanations
+from future/unknown analyzer versions remain as originally recorded.
+
+For manual SQL setup, open `backend/app/schema.sql` in your SQL Server client
+and execute it against the configured application database. The Python setup
+command reads that same file, so both installation methods use one schema.
+The script creates `dbo.recognition_records` and `dbo.recognition_checks`
+only if absent, plus their indexes and foreign key. `NVARCHAR` metadata
+supports both Traditional and Simplified Chinese. No database changes happen
+merely by opening the UI or changing its language.
+
+The initial `screenshot-statistics-v1` analyzer screens for possible black/blank
+feeds using central-image luminance and variance. This is a heuristic, not a
+validated fulfillment of the PRD's accuracy KPIs. Dark scenes can be false
+positives. No-signal text overlays, freeze, and flicker are not verified.
+Timestamp OCR and scene comparison are explicitly **Not assessed**, with reasons
+in the review drawer. A screenshot with no detected black/blank pattern is
+**Needs verification**, never certified healthy. Upload time is not substituted
+for the camera's capture time. OCR requires a configured engine; displacement
+checks require a verified baseline and comparison engine.
+
+The table includes evidence thumbnails, shop/region, upload time, individual
+check statuses, overall result and operator review. Filters and pagination run
+on the server; summary cards cover all records, not just the filtered page.
+Operators can acknowledge, mark a false positive, or return a record to
+unreviewed. Notes and the latest review time are retained without changing the
+original recognition findings. There is no authenticated reviewer identity or
+historical review audit trail yet.
+
+API endpoints:
+
+- `POST /api/recognitions`: multipart screenshot and metadata.
+- `GET /api/recognitions`: search, outcome, region, review-status and pagination.
+- `GET /api/recognitions/{id}`: saved record and individual checks.
+- `GET /api/recognitions/{id}/evidence`: JPEG evidence, with no-store caching.
+- `PATCH /api/recognitions/{id}/review`: review status and optional note.
+
+Missing schema/configuration and database errors produce HTTP 503 and an
+explicit UI error; there is no in-memory or mock-data fallback. Invalid uploads
+return HTTP 422. Nginx allows an 11 MB multipart request; direct backend
+deployments should configure an equivalent ingress request-size limit.
+
 ## Linux Docker deployment
 
 Install Docker Engine and the Docker Compose plugin on the Linux server. From
@@ -108,8 +181,10 @@ container; use a reachable server address rather than a host-local tunnel.
 
 The containers provide a deployment foundation, not a production security
 setup. Configure HTTPS, access controls and any required firewall rules before
-exposing the service; authentication, persistence and device integrations are
-not yet implemented.
+exposing the service. Recognition persistence is implemented, but authentication,
+device integrations and automated retention are not. Restrict access to both
+records and evidence; do not expose this unauthenticated internal workspace
+publicly. Apply the recognition schema before using uploads.
 
 ## Checks
 
@@ -120,6 +195,9 @@ not yet implemented.
 # From frontend/
 npm run lint
 npm run build
+
+# Localization tests (Node.js 22.18+ or 24+ with native TypeScript support):
+node --test tests\localization.test.mjs
 ```
 
 ## Security

@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, ValidationError
 
 from app.database import DatabaseCheckError, check_database
+from app.recognition import router as recognition_router
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,7 @@ class DatabaseHealthResponse(HealthResponse):
 
 
 app = FastAPI(title="CCTV Recognition API")
+app.include_router(recognition_router)
 
 
 @app.get("/api/health", response_model=HealthResponse, tags=["health"])
