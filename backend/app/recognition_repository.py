@@ -190,13 +190,15 @@ def get_baseline(record_id: UUID) -> Baseline | None:
                 "b.region COLLATE Latin1_General_100_BIN2 = r.region COLLATE Latin1_General_100_BIN2 "
                 "AND b.shop_code COLLATE Latin1_General_100_BIN2 = r.shop_code COLLATE Latin1_General_100_BIN2 "
                 "AND b.camera_name COLLATE Latin1_General_100_BIN2 = r.camera_name COLLATE Latin1_General_100_BIN2 "
-                "WHERE r.id = ? ORDER BY b.id DESC",
+                "WHERE r.id = ? AND r.shop_code <> '' AND r.camera_name <> '' ORDER BY b.id DESC",
                 str(record_id),
             ).fetchone()
             return Baseline(record_id=row[0], approved_at=row[1].replace(tzinfo=timezone.utc)) if row else None
 
 
 def get_baseline_evidence(region: str, shop_code: str, camera_name: str) -> bytes | None:
+    if not shop_code.strip() or not camera_name.strip():
+        return None
     with closing(connect(DatabaseSettings())) as connection:
         with closing(connection.cursor()) as cursor:
             row = cursor.execute(

@@ -166,7 +166,7 @@ export function RecognitionWorkspace({ apiStatus, onLogout }: { apiStatus: strin
           </button>
         </div>
         {storageError && <div className="error-message language-warning" role="alert">{t('languageStorageError')}</div>}
-        {notice && <div className="notice success-notice" role="status"><Icon name="check" size={18} /><p>{t('uploadedNotice', { shop: notice.shop_code, camera: notice.camera_name })}</p>
+        {notice && <div className="notice success-notice" role="status"><Icon name="check" size={18} /><p>{t('uploadedNotice', { shop: notice.shop_code || t('notProvided'), camera: notice.camera_name || t('notProvided') })}</p>
           <button className="icon-button" aria-label={t('dismissNotification')} onClick={() => setNotice(null)}><Icon name="close" size={16} /></button>
         </div>}
         <section className="stats-grid" aria-label={t('summary')}>
@@ -213,9 +213,9 @@ export function RecognitionWorkspace({ apiStatus, onLogout }: { apiStatus: strin
                   <thead><tr><th scope="col">{t('cameraEvidence')}</th><th scope="col">{t('shopRegion')}</th><th scope="col">{t('uploadedHkt')}</th>
                     <th scope="col">{t('recognitionChecks')}</th><th scope="col">{t('result')}</th><th scope="col">{t('review')}</th><th scope="col"><span className="sr-only">{t('actions')}</span></th></tr></thead>
                   <tbody>{data.records.map(record => <tr key={record.id}>
-                    <td><div className="camera-cell"><EvidenceImage id={record.id} alt={t('screenshotAlt', { camera: record.camera_name })} thumbnail />
-                      <div><strong title={record.camera_name}>{record.camera_name}</strong><span title={record.filename}>{record.filename}</span></div></div></td>
-                    <td><strong className="cell-title">{record.shop_code}</strong><span className="cell-subtitle">{t(regionKeys[record.region])}</span></td>
+                    <td><div className="camera-cell"><EvidenceImage id={record.id} alt={t('screenshotAlt', { camera: record.camera_name || t('notProvided') })} thumbnail />
+                      <div><strong title={record.camera_name}>{record.camera_name || t('notProvided')}</strong><span title={record.filename}>{record.filename}</span></div></div></td>
+                    <td><strong className="cell-title">{record.shop_code || t('notProvided')}</strong><span className="cell-subtitle">{t(regionKeys[record.region])}</span></td>
                     <td><time className="date-cell" dateTime={record.uploaded_at}>{formatDate(record.uploaded_at)}</time>
                       <span className="cell-subtitle">{record.width} × {record.height}</span></td>
                     <td><div className="table-checks">{record.checks.map(check =>
@@ -225,7 +225,7 @@ export function RecognitionWorkspace({ apiStatus, onLogout }: { apiStatus: strin
                       </span>)}</div></td>
                     <td><span className={`badge ${record.outcome}`}>{t(outcomeKeys[record.outcome])}</span></td>
                     <td><span className={`review-status review-${record.review_status}`}><span />{t(reviewKeys[record.review_status])}</span></td>
-                    <td><button className="row-action" aria-label={t('reviewRecord', { shop: record.shop_code, camera: record.camera_name })} onClick={() => setSelected(record)}>
+                    <td><button className="row-action" aria-label={t('reviewRecord', { shop: record.shop_code || t('notProvided'), camera: record.camera_name || t('notProvided') })} onClick={() => setSelected(record)}>
                       {t('review')}<Icon name="chevron" size={15} /></button></td>
                   </tr>)}</tbody>
                 </table> :

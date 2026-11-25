@@ -39,6 +39,7 @@ export function RecordDrawer({ record, onClose, onSaved }: {
   const [baselineBusy, setBaselineBusy] = useState(false)
   const [baselineError, setBaselineError] = useState<Error | null>(null)
   const [confirmBaseline, setConfirmBaseline] = useState(false)
+  const hasCameraMetadata = Boolean(record.shop_code.trim() && record.camera_name.trim())
 
   useEffect(() => {
     if (!['burst-statistics-v1', 'vision-llm-burst-v1', 'vision-llm-burst-v2'].includes(record.analyzer_version)) return
@@ -91,7 +92,7 @@ export function RecordDrawer({ record, onClose, onSaved }: {
     } finally { setBaselineBusy(false) }
   }
 
-  return <Dialog title={record.camera_name} subtitle={`${record.shop_code} / ${t(regionKeys[record.region])}`}
+  return <Dialog title={record.camera_name || t('notProvided')} subtitle={`${record.shop_code || t('notProvided')} / ${t(regionKeys[record.region])}`}
     drawer onClose={onClose} busy={busy || baselineBusy}>
     <div className="dialog-body drawer-body">
       <div className="record-heading">
@@ -99,7 +100,7 @@ export function RecordDrawer({ record, onClose, onSaved }: {
         <span className="muted small">{t(reviewKeys[record.review_status])}</span>
       </div>
       <p id="dialog-description" className="muted">{t('reviewDescription')}</p>
-      <EvidenceImage key={`${record.id}-${frameIndex}`} id={record.id} frameIndex={frameIndex} alt={t('evidenceAlt', { camera: record.camera_name })} />
+      <EvidenceImage key={`${record.id}-${frameIndex}`} id={record.id} frameIndex={frameIndex} alt={t('evidenceAlt', { camera: record.camera_name || t('notProvided') })} />
       <div className="evidence-caption"><span title={record.filename}>{record.filename}</span><span>{record.width} × {record.height}</span></div>
       {burst && <div>
         <p className="field-hint">{t('burstReviewHint', { count: burst.frame_count, seconds: burst.duration_seconds })}</p>
@@ -143,11 +144,12 @@ export function RecordDrawer({ record, onClose, onSaved }: {
       <div className="review-form">
         <div className="section-heading"><h3>{t('baselineTitle')}</h3></div>
         <p className="field-hint">{t('baselineHint')}</p>
+        {!hasCameraMetadata && <p className="field-hint">{t('baselineMetadataRequired')}</p>}
         <div className="baseline-actions">
-          <button type="button" className="button secondary" disabled={busy || baselineBusy} onClick={loadBaseline}>
+          <button type="button" className="button secondary" disabled={!hasCameraMetadata || busy || baselineBusy} onClick={loadBaseline}>
             {t('baselineLoad')}
           </button>
-          {!confirmBaseline && <button type="button" className="button secondary" disabled={busy || baselineBusy}
+          {!confirmBaseline && <button type="button" className="button secondary" disabled={!hasCameraMetadata || busy || baselineBusy}
             onClick={() => setConfirmBaseline(true)}>{t('baselineApprove')}</button>}
         </div>
         {baselineLoaded && !baseline && <p className="field-hint">{t('baselineNone')}</p>}

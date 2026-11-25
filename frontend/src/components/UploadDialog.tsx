@@ -89,11 +89,11 @@ export function UploadDialog({ onClose, onUploaded }: {
               <strong>{t('dropzone')}</strong><span>{t('fileLimits')}</span></>}
         </button>
         <fieldset disabled={busy} className="form-grid">
-          <label>{t('shopCode')} <span className="required">*</span>
-            <input name="shop_code" placeholder={t('shopPlaceholder')} required maxLength={50} pattern=".*\S.*" />
+          <label>{t('shopCode')} <span className="optional">{t('optional')}</span>
+            <input name="shop_code" placeholder={t('shopPlaceholder')} maxLength={50} />
           </label>
-          <label>{t('cameraChannel')} <span className="required">*</span>
-            <input name="camera_name" placeholder={t('cameraPlaceholder')} required maxLength={100} pattern=".*\S.*" />
+          <label>{t('cameraChannel')} <span className="optional">{t('optional')}</span>
+            <input name="camera_name" placeholder={t('cameraPlaceholder')} maxLength={100} />
           </label>
           <label>{t('region')} <span className="required">*</span>
             <select name="region" defaultValue="Hong Kong"><option value="Hong Kong">{t('hongKong')}</option><option value="Macau">{t('macau')}</option></select>

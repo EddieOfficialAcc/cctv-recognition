@@ -40,15 +40,14 @@ router = APIRouter(
 @router.post("", response_model=RecognitionRecord, status_code=201)
 def upload_screenshot(
     screenshot: Annotated[UploadFile, File()],
-    shop_code: Annotated[str, Form(min_length=1, max_length=50)],
-    camera_name: Annotated[str, Form(min_length=1, max_length=100)],
     region: Annotated[Region, Form()],
+    shop_code: Annotated[str, Form(max_length=50, description="Optional shop code; blank when omitted.")] = "",
+    camera_name: Annotated[str, Form(max_length=100, description="Optional camera name; blank when omitted.")] = "",
     captured_at: Annotated[datetime | None, Form()] = None,
     burst_frames: Annotated[list[UploadFile] | None, File()] = None,
     burst_duration_seconds: Annotated[float | None, Form(ge=1.5, le=2.0)] = None,
 ) -> RecognitionRecord:
-    if not shop_code.strip() or not camera_name.strip():
-        raise HTTPException(422, "Shop code and camera name cannot be blank.")
+    shop_code, camera_name = shop_code.strip(), camera_name.strip()
     if captured_at is not None and captured_at.utcoffset() is None:
         raise HTTPException(422, "Capture time must include a timezone offset.")
     try:
@@ -59,12 +58,12 @@ def upload_screenshot(
             if not 5 <= len(burst_frames) <= 9:
                 raise InvalidScreenshot("A burst requires 6 to 10 frames including the screenshot.")
             frames = [frame.file.read(MAX_BURST_FRAME_BYTES + 1) for frame in burst_frames]
-            baseline = repository.get_baseline_evidence(region, shop_code.strip(), camera_name.strip())
+            baseline = repository.get_baseline_evidence(region, shop_code, camera_name) if shop_code and camera_name else None
             analysis, saved_frames = analyze_burst(content, frames, captured_at, baseline, burst_duration_seconds)
         else:
             if burst_duration_seconds is not None:
                 raise InvalidScreenshot("Burst duration requires additional burst frames.")
-            baseline = repository.get_baseline_evidence(region, shop_code.strip(), camera_name.strip())
+            baseline = repository.get_baseline_evidence(region, shop_code, camera_name) if shop_code and camera_name else None
             analysis = analyze_screenshot(content, captured_at, baseline)
     except InvalidScreenshot as error:
         raise HTTPException(422, str(error)) from None
@@ -76,7 +75,7 @@ def upload_screenshot(
             frame.file.close()
     filename = (screenshot.filename or "screenshot").replace("\\", "/").rsplit("/", 1)[-1]
     record = RecognitionRecord(
-        id=uuid4(), shop_code=shop_code.strip(), camera_name=camera_name.strip(),
+        id=uuid4(), shop_code=shop_code, camera_name=camera_name,
         region=region, filename=filename[:255] or "screenshot",
         uploaded_at=datetime.now(timezone.utc), captured_at=captured_at,
         width=analysis.width, height=analysis.height,
@@ -152,6 +151,11 @@ def recognition_baseline(record_id: UUID) -> Baseline:
 
 @router.post("/{record_id}/baseline", response_model=Baseline, status_code=201)
 def approve_recognition_baseline(record_id: UUID) -> Baseline:
+    record = repository.get_record(record_id)
+    if record is None:
+        raise HTTPException(404, "Recognition record not found.")
+    if not record.shop_code.strip() or not record.camera_name.strip():
+        raise HTTPException(422, "Shop code and camera name are required for a camera baseline, not for uploads.")
     baseline = repository.approve_baseline(record_id)
     if baseline is None:
         raise HTTPException(404, "Recognition record not found.")

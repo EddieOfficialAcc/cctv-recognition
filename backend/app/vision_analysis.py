@@ -83,7 +83,7 @@ For scene, assess visible obstruction, and compare the camera viewpoint to the a
 Without a baseline, do not claim the camera viewpoint is unchanged.
 Use flagged for plausible visible issues, not_assessed for insufficient evidence, and pass only when the
 relevant visible evidence is sufficient. Describe uncertainty and do not invent facts.
-Inspect only the timestamp overlay in the upper-left corner of the current screenshot.
+Inspect only the timestamp overlay in the upper-right corner of the current screenshot.
 If the entire date and time are unambiguously readable, normalize them to YYYY-MM-DD HH:MM:SS,
 without guessing missing digits or ambiguous date order. Otherwise use state missing, unreadable or
 ambiguous as appropriate and a null reading. Do not use timestamps from the baseline or other frames.

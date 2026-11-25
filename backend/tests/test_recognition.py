@@ -144,6 +144,26 @@ class RecognitionApiTest(unittest.TestCase):
         self.assertEqual(response.json()["outcome"], "needs_review")
         self.assertIsNone(response.json()["captured_at"])
 
+    def test_upload_accepts_omitted_empty_and_whitespace_camera_metadata(self) -> None:
+        for fields, expected in [
+            ({}, ("", "")),
+            ({"shop_code": "", "camera_name": ""}, ("", "")),
+            ({"shop_code": " \t ", "camera_name": " \t "}, ("", "")),
+            ({"shop_code": " SHOP "}, ("SHOP", "")),
+            ({"camera_name": " CH01 "}, ("", "CH01")),
+        ]:
+            with self.subTest(fields=fields), patch("app.recognition.repository.save_record") as save:
+                response = self.client.post(
+                    "/api/recognitions", data={"region": "Hong Kong", **fields},
+                    files={"screenshot": ("test.png", screenshot(), "image/png")},
+                )
+                self.assertEqual(response.status_code, 201)
+                self.assertEqual((response.json()["shop_code"], response.json()["camera_name"]), expected)
+                record = save.call_args.args[0]
+                self.assertEqual((record.shop_code, record.camera_name), expected)
+                self.assertIsNone(self.analyzer.call_args.args[2])
+        self.baseline.assert_not_called()
+
     def test_upload_supplies_baseline_and_capture_time_to_vision(self) -> None:
         self.baseline.return_value = b"baseline"
         with patch("app.recognition.repository.save_record"):
@@ -164,7 +184,7 @@ class RecognitionApiTest(unittest.TestCase):
     def test_invalid_upload_and_naive_capture_time_never_reach_storage(self) -> None:
         with patch("app.recognition.repository.save_record") as save:
             for fields in (
-                {"content": b"corrupt"}, {"shop_code": " "}, {"camera_name": " "},
+                {"content": b"corrupt"}, {"shop_code": "x" * 51}, {"camera_name": "x" * 101},
                 {"region": "unknown"}, {"captured_at": "2026-11-24T10:30:00"},
             ):
                 with self.subTest(fields=fields):
@@ -176,7 +196,7 @@ class RecognitionApiTest(unittest.TestCase):
         files = [("screenshot", ("first.png", image, "image/png"))] + [
             ("burst_frames", (f"{i}.png", image, "image/png")) for i in range(5)
         ]
-        data = {"shop_code": "TEST", "camera_name": "CH01", "region": "Hong Kong"}
+        data = {"region": "Hong Kong"}
         with patch("app.recognition.repository.save_record") as save:
             invalid = self.client.post("/api/recognitions", data=data, files=files)
             self.assertEqual(invalid.status_code, 422)
@@ -188,6 +208,9 @@ class RecognitionApiTest(unittest.TestCase):
         self.assertEqual(response.json()["analyzer_version"], "vision-llm-burst-v2")
         self.assertEqual(response.json()["outcome"], "flagged")
         record, primary, extra, duration = save.call_args.args
+        self.assertEqual((record.shop_code, record.camera_name), ("", ""))
+        self.baseline.assert_not_called()
+        self.assertIsNone(self.analyzer.call_args.args[2])
         self.assertEqual((len(extra), duration), (5, 2.0))
         with patch("app.recognition.repository.get_burst_info", return_value=(6, 2.0)):
             self.assertEqual(self.client.get(f"/api/recognitions/{record.id}/burst").json(),
@@ -231,7 +254,8 @@ class RecognitionApiTest(unittest.TestCase):
     def test_baseline_approval_and_lookup_use_saved_record_evidence(self) -> None:
         record_id = uuid4()
         baseline = Baseline(record_id=record_id, approved_at=datetime.now(timezone.utc))
-        with patch("app.recognition.repository.approve_baseline", return_value=baseline) as approve:
+        with patch("app.recognition.repository.get_record", return_value=make_record()), \
+             patch("app.recognition.repository.approve_baseline", return_value=baseline) as approve:
             response = self.client.post(f"/api/recognitions/{record_id}/baseline")
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.json()["record_id"], str(record_id))
@@ -240,8 +264,25 @@ class RecognitionApiTest(unittest.TestCase):
             self.assertEqual(self.client.get(f"/api/recognitions/{record_id}/baseline").json(), response.json())
         with patch("app.recognition.repository.get_baseline", return_value=None):
             self.assertEqual(self.client.get(f"/api/recognitions/{record_id}/baseline").status_code, 404)
-        with patch("app.recognition.repository.approve_baseline", return_value=None):
+        with patch("app.recognition.repository.get_record", return_value=None), \
+             patch("app.recognition.repository.approve_baseline", return_value=None) as approve:
             self.assertEqual(self.client.post(f"/api/recognitions/{record_id}/baseline").status_code, 404)
+            approve.assert_not_called()
+
+    def test_baseline_approval_requires_complete_camera_metadata(self) -> None:
+        for metadata in [
+            {"shop_code": "", "camera_name": ""},
+            {"shop_code": "", "camera_name": "CH01"},
+            {"shop_code": "SHOP", "camera_name": " "},
+        ]:
+            record = make_record().model_copy(update=metadata)
+            with self.subTest(metadata=metadata), \
+                 patch("app.recognition.repository.get_record", return_value=record), \
+                 patch("app.recognition.repository.approve_baseline") as approve:
+                response = self.client.post(f"/api/recognitions/{record.id}/baseline")
+                self.assertEqual(response.status_code, 422)
+                self.assertIn("not for uploads", response.json()["detail"])
+                approve.assert_not_called()
 
     def test_review_returns_saved_operator_decision_without_changing_checks(self) -> None:
         record = make_record()
@@ -261,6 +302,13 @@ class RecognitionApiTest(unittest.TestCase):
 
 
 class RecognitionRepositoryTest(unittest.TestCase):
+    def test_incomplete_camera_metadata_cannot_match_a_baseline(self) -> None:
+        with patch("app.recognition_repository.connect") as connect:
+            for shop, camera in [("", ""), ("shop", ""), ("", "camera"), (" ", "camera")]:
+                with self.subTest(shop=shop, camera=camera):
+                    self.assertIsNone(repository.get_baseline_evidence("Hong Kong", shop, camera))
+            connect.assert_not_called()
+
     def test_baseline_evidence_lookup_is_camera_scoped_and_parameterized(self) -> None:
         connection = MagicMock()
         cursor = connection.cursor.return_value
@@ -291,6 +339,7 @@ class RecognitionRepositoryTest(unittest.TestCase):
         self.assertIn("SELECT id, region, shop_code, camera_name", insert.args[0])
         self.assertEqual(insert.args[2], str(record_id))
         query = cursor.execute.call_args_list[1]
+        self.assertIn("r.shop_code <> '' AND r.camera_name <> ''", query.args[0])
         for field in ("region", "shop_code", "camera_name"):
             self.assertIn(f"b.{field}", query.args[0])
         self.assertEqual(query.args[1], str(record_id))

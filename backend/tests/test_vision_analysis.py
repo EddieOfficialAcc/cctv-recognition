@@ -42,7 +42,8 @@ class VisionAnalysisTest(unittest.TestCase):
         self.assertEqual(connection.request.call_args.args[:2], ("POST", "/openai/v1/chat/completions"))
         request = json.loads(connection.request.call_args.kwargs["body"])
         self.assertEqual(request["model"], "test-deployment")
-        self.assertIn("upper-left corner of the current screenshot", request["messages"][0]["content"])
+        self.assertIn("upper-right corner of the current screenshot", request["messages"][0]["content"])
+        self.assertNotIn("upper-left", request["messages"][0]["content"])
         content = request["messages"][1]["content"]
         urls = [part["image_url"]["url"] for part in content if part["type"] == "image_url"]
         self.assertEqual(urls, [
