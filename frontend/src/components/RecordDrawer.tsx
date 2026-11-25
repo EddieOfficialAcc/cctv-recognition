@@ -7,8 +7,20 @@ import { Dialog } from './Dialog'
 import { EvidenceImage } from './EvidenceImage'
 import { Icon } from './Icon'
 import { useLocale } from '../localization'
+import { parseTimestampDetails, type TimestampDetails } from '../timestamp'
+import type { MessageKey } from '../messages'
 
 const checkIcons = { signal: 'camera', timestamp: 'clock', scene: 'image' } as const
+const timestampStates: Record<TimestampDetails['state'], MessageKey> = {
+  readable: 'timestampStateReadable', missing: 'timestampStateMissing',
+  unreadable: 'timestampStateUnreadable', ambiguous: 'timestampStateAmbiguous',
+}
+const timestampReasons: Record<TimestampDetails['reason'], MessageKey> = {
+  missing: 'timestampReasonMissing', unreadable: 'timestampReasonUnreadable',
+  ambiguous: 'timestampReasonAmbiguous', invalid: 'timestampReasonInvalid',
+  capture_missing: 'timestampReasonCaptureMissing', boundary: 'timestampReasonBoundary',
+  outside: 'timestampReasonOutside', within: 'timestampReasonWithin',
+}
 
 export function RecordDrawer({ record, onClose, onSaved }: {
   record: RecognitionRecord; onClose: () => void; onSaved: (record: RecognitionRecord) => void
@@ -29,7 +41,7 @@ export function RecordDrawer({ record, onClose, onSaved }: {
   const [confirmBaseline, setConfirmBaseline] = useState(false)
 
   useEffect(() => {
-    if (!['burst-statistics-v1', 'vision-llm-burst-v1'].includes(record.analyzer_version)) return
+    if (!['burst-statistics-v1', 'vision-llm-burst-v1', 'vision-llm-burst-v2'].includes(record.analyzer_version)) return
     const controller = new AbortController()
     fetchBurstInfo(record.id, controller.signal).then(setBurst).catch(cause => {
       if (controller.signal.aborted) return
@@ -104,36 +116,55 @@ export function RecordDrawer({ record, onClose, onSaved }: {
         <div><dt>{t('capturedTime')}</dt><dd>{formatDate(record.captured_at)}</dd></div>
       </dl>
       <div className="section-heading"><h3>{t('recognitionResults')}</h3><span className="muted small">{t('coreChecks')}</span></div>
-      <div className="check-list">{record.checks.map(check =>
-        <section className="check-card" key={check.category}>
+      <div className="check-list">{record.checks.map(check => {
+        const isTimestampV2 = check.category === 'timestamp' &&
+          ['vision-llm-v2', 'vision-llm-burst-v2'].includes(record.analyzer_version)
+        const details = isTimestampV2 ? parseTimestampDetails(check.explanation) : null
+        return <section className="check-card" key={check.category}>
           <div className="check-card-heading"><Icon name={checkIcons[check.category]} size={18} />
             <h4>{t(categoryTitleKeys[check.category])}</h4>
             <span className={`badge check-${check.status}`}>{t(checkKeys[check.status])}</span>
           </div>
-          <p>{checkExplanation(record, check)}</p>
-        </section>,
-      )}</div>
+          {isTimestampV2 ? details ? <>
+            <p>{t(timestampReasons[details.reason])}</p>
+            <dl className="timestamp-details">
+              <div><dt>{t('timestampOverlay')}</dt><dd>{t(timestampStates[details.state])}</dd></div>
+              <div><dt>{t('timestampReading')}</dt><dd>{details.reading ?? t('notProvided')}</dd></div>
+              <div><dt>{t('timestampReference')}</dt><dd>{formatDate(record.captured_at, true)}</dd></div>
+              <div><dt>{t('timestampDifference')}</dt><dd>{details.difference_seconds === null
+                ? t('notProvided')
+                : t('timestampDifferenceValue', { seconds: `${details.difference_seconds >= 0 ? '+' : ''}${details.difference_seconds}` })}</dd></div>
+              <div><dt>{t('timestampThreshold')}</dt><dd>{t('timestampSeconds', { seconds: details.threshold_seconds })}</dd></div>
+            </dl>
+          </> : <p>{t('timestampDetailsUnavailable')}</p> : <p>{checkExplanation(record, check)}</p>}
+        </section>
+      })}</div>
       <p className="analyzer-label">{t('analyzerDisclaimer', { version: record.analyzer_version })}</p>
       <div className="review-form">
         <div className="section-heading"><h3>{t('baselineTitle')}</h3></div>
         <p className="field-hint">{t('baselineHint')}</p>
-        <button type="button" className="button secondary" disabled={busy || baselineBusy} onClick={loadBaseline}>
-          {t('baselineLoad')}
-        </button>
+        <div className="baseline-actions">
+          <button type="button" className="button secondary" disabled={busy || baselineBusy} onClick={loadBaseline}>
+            {t('baselineLoad')}
+          </button>
+          {!confirmBaseline && <button type="button" className="button secondary" disabled={busy || baselineBusy}
+            onClick={() => setConfirmBaseline(true)}>{t('baselineApprove')}</button>}
+        </div>
         {baselineLoaded && !baseline && <p className="field-hint">{t('baselineNone')}</p>}
         {baseline && <>
           <p className="field-hint">{t('baselineApprovedAt', { date: formatDate(baseline.approved_at) })}</p>
           <EvidenceImage key={baseline.record_id} id={baseline.record_id} alt={t('baselineEvidenceAlt')} />
         </>}
         {baselineError && <div className="error-message" role="alert">{errorMessage(baselineError)}</div>}
-        {!confirmBaseline ? <button type="button" className="button secondary" disabled={busy || baselineBusy}
-          onClick={() => setConfirmBaseline(true)}>{t('baselineApprove')}</button> :
+        {confirmBaseline &&
           <div>
             <p className="field-hint">{t('baselineConfirmHint')}</p>
-            <button type="button" className="button primary" disabled={busy || baselineBusy}
-              onClick={setCurrentBaseline}>{t('baselineConfirm')}</button>
-            <button type="button" className="button secondary" disabled={baselineBusy}
-              onClick={() => setConfirmBaseline(false)}>{t('cancel')}</button>
+            <div className="baseline-actions">
+              <button type="button" className="button primary" disabled={busy || baselineBusy}
+                onClick={setCurrentBaseline}>{t('baselineConfirm')}</button>
+              <button type="button" className="button secondary" disabled={baselineBusy}
+                onClick={() => setConfirmBaseline(false)}>{t('cancel')}</button>
+            </div>
           </div>}
       </div>
       <form className="review-form" onSubmit={submit}>

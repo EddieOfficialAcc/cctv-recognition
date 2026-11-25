@@ -11,7 +11,7 @@ from app.vision_analysis import analyze
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 MAX_IMAGE_PIXELS = 20_000_000
 MAX_BURST_FRAME_BYTES = 1024 * 1024
-ANALYZER_VERSION = "vision-llm-v1"
+ANALYZER_VERSION = "vision-llm-v2"
 
 
 class InvalidScreenshot(ValueError):
@@ -86,7 +86,7 @@ def analyze_burst(
     first_evidence = _jpeg(first)
     analysis = ScreenshotAnalysis(
         evidence=first_evidence, width=first.width, height=first.height,
-        analyzer_version="vision-llm-burst-v1",
+        analyzer_version="vision-llm-burst-v2",
         checks=analyze(first_evidence, evidence, baseline, captured_at, duration_seconds),
     )
     return analysis, evidence

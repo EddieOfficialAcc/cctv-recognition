@@ -195,11 +195,15 @@ dd { margin: 7px 0 0; font-size: 12px; color: #546d83; }
 .check-card-heading { display: flex; align-items: center; gap: 9px; color: #7e94a9; }
 .check-card h4 { flex: 1; font-size: 12px; font-weight: 600; color: #50687e; }
 .check-card p { font-size: 11px; color: #8394a6; line-height: 1.8; margin-top: 10px; }
+.timestamp-details { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-top: 12px; }
+.timestamp-details dd { overflow-wrap: anywhere; }
 .analyzer-label { font-size: 10px; color: #9aa7b5; line-height: 1.7; margin-top: 13px; }
 .review-form { border-top: 1px solid #e9edf2; padding-top: 23px; margin-top: 23px; }
 .review-form label { margin-bottom: 16px; }
 textarea { resize: vertical; min-height: 85px; }
 .review-form .button { margin-top: 14px; }
+.baseline-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+.baseline-actions .button { margin-top: 0; white-space: normal; }
 .success-message { display: flex; align-items: center; gap: 7px; color: #2b9278; font-size: 11px; margin-top: 12px; }
 .record-id { font-size: 9px; color: #a0adbb; margin-top: 25px; padding-top: 15px; border-top: 1px solid #e9edf2; }
 .record-id span { display: block; font-family: monospace; margin-top: 5px; overflow-wrap: anywhere; }

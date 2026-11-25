@@ -44,11 +44,11 @@ export function useLanguageState() {
     return translate(language, key, parameters)
   }
 
-  function formatDate(value: string | null) {
+  function formatDate(value: string | null, seconds = false) {
     if (!value) return t('notProvided')
     return new Intl.DateTimeFormat(dateLocales[language], {
       timeZone: 'Asia/Hong_Kong', day: '2-digit', month: 'short', year: 'numeric',
-      hour: '2-digit', minute: '2-digit', hour12: false,
+      hour: '2-digit', minute: '2-digit', ...(seconds ? { second: '2-digit' as const } : {}), hour12: false,
     }).format(new Date(value))
   }
 
@@ -57,7 +57,7 @@ export function useLanguageState() {
   }
 
   function checkExplanation(record: RecognitionRecord, check: RecognitionCheck) {
-    if (['vision-llm-v1', 'vision-llm-burst-v1'].includes(record.analyzer_version)) {
+    if (['vision-llm-v1', 'vision-llm-burst-v1', 'vision-llm-v2', 'vision-llm-burst-v2'].includes(record.analyzer_version)) {
       if (check.category === 'signal' || check.category === 'scene') {
         if (check.explanation === 'Scene comparison requires an approved baseline. Camera movement was not assessed.') {
           return t('visionBaselineRequired')

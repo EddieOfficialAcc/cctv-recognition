@@ -10,7 +10,7 @@ from PIL import Image
 
 from app.main import app
 from app.auth import require_user
-from app.vision_analysis import AnalysisError, VisionSettings, _request, _timestamp_check, analyze
+from app.vision_analysis import AnalysisError, TimestampEvidence, VisionSettings, _request, _timestamp_check, analyze
 
 
 def model_result():
@@ -18,7 +18,7 @@ def model_result():
     return {
         "signal": {"status": "pass", "explanation": explanation},
         "scene": {"status": "pass", "explanation": explanation},
-        "timestamp": "2026-11-24 10:30:00",
+        "timestamp": {"state": "readable", "reading": "2026-11-24 10:30:00"},
     }
 
 
@@ -42,6 +42,7 @@ class VisionAnalysisTest(unittest.TestCase):
         self.assertEqual(connection.request.call_args.args[:2], ("POST", "/openai/v1/chat/completions"))
         request = json.loads(connection.request.call_args.kwargs["body"])
         self.assertEqual(request["model"], "test-deployment")
+        self.assertIn("upper-left corner of the current screenshot", request["messages"][0]["content"])
         content = request["messages"][1]["content"]
         urls = [part["image_url"]["url"] for part in content if part["type"] == "image_url"]
         self.assertEqual(urls, [
@@ -90,22 +91,46 @@ class VisionAnalysisTest(unittest.TestCase):
 
     def test_timestamp_drift_and_uncertainty(self):
         captured = datetime(2026, 11, 24, 2, 30, tzinfo=timezone.utc)
-        for text, expected in [
-            ("2026-11-24 10:30:00", "pass"),
-            ("2026-11-24 10:33:00", "not_assessed"),
-            ("2026-11-24 10:35:00", "flagged"),
-            ("2026-11-24 10:30", "not_assessed"),
-            ("2026-02-31 10:30:00", "not_assessed"),
-            (None, "not_assessed"),
+        for state, text, expected, reason, difference in [
+            ("readable", "2026-11-24 10:30:00", "pass", "within", 0),
+            ("readable", "2026-11-24 10:31:59", "pass", "within", 119),
+            ("readable", "2026-11-24 10:32:00", "not_assessed", "boundary", 120),
+            ("readable", "2026-11-24 10:34:00", "not_assessed", "boundary", 240),
+            ("readable", "2026-11-24 10:34:01", "flagged", "outside", 241),
+            ("readable", "2026-11-24 10:25:00", "flagged", "outside", -300),
+            ("readable", "2026-11-24 10:30", "not_assessed", "invalid", None),
+            ("readable", "2026-02-31 10:30:00", "not_assessed", "invalid", None),
+            ("missing", None, "not_assessed", "missing", None),
+            ("unreadable", None, "not_assessed", "unreadable", None),
+            ("ambiguous", None, "not_assessed", "ambiguous", None),
         ]:
-            with self.subTest(text=text):
-                self.assertEqual(_timestamp_check(text, captured, 180).status, expected)
+            with self.subTest(state=state, text=text):
+                check = _timestamp_check(TimestampEvidence(state=state, reading=text), captured, 180)
+                self.assertEqual(check.status, expected)
+                details = json.loads(check.explanation)
+                self.assertEqual((details["reason"], details["difference_seconds"]), (reason, difference))
+                self.assertEqual(details["threshold_seconds"], 180)
+                self.assertEqual(details["reading"], text)
+
+    def test_missing_capture_time_and_custom_threshold_preserve_evidence(self):
+        evidence = TimestampEvidence(state="readable", reading="2026-11-24 10:35:00")
+        check = _timestamp_check(evidence, None, 600)
+        details = json.loads(check.explanation)
+        self.assertEqual(check.status, "not_assessed")
+        self.assertEqual(details["reason"], "capture_missing")
+        self.assertEqual(details["reading"], evidence.reading)
+        self.assertEqual(details["threshold_seconds"], 600)
+        captured = datetime(2026, 11, 24, 2, 30, tzinfo=timezone.utc)
+        self.assertEqual(_timestamp_check(evidence, captured, 600).status, "pass")
 
     def test_service_failure_and_invalid_results_are_explicit(self):
         for status, content in [
             (401, b"private provider response"),
             (200, b"not-json"),
             (200, json.dumps({"choices": [{"message": {"content": '{"signal":{}}'}}]}).encode()),
+            (200, json.dumps({"choices": [{"message": {"content": json.dumps({
+                **model_result(), "timestamp": {"state": "missing", "reading": "2026-11-24 10:30:00"},
+            })}}]}).encode()),
         ]:
             with self.subTest(status=status, content=content):
                 with patch("app.vision_analysis.HTTPSConnection") as factory:

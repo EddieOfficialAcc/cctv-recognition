@@ -103,6 +103,7 @@ export function UploadDialog({ onClose, onUploaded }: {
             <span className="field-hint">{t('captureTimeHint')}</span>
           </label>
         </fieldset>
+        <p className="field-hint">{t('timestampChecksHint')}</p>
         <fieldset disabled={busy} className="form-grid">
           <label>{t('burstFrames')} <span className="optional">{t('optional')}</span>
             <input type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={event => {

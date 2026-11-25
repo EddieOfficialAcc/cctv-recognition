@@ -48,7 +48,7 @@ class ScreenshotTest(unittest.TestCase):
     def test_screenshot_is_converted_and_sent_once(self) -> None:
         with patch("app.inspection.analyze", return_value=checks()) as analyze:
             analysis = analyze_screenshot(screenshot(), baseline=b"baseline")
-        self.assertEqual(analysis.analyzer_version, "vision-llm-v1")
+        self.assertEqual(analysis.analyzer_version, "vision-llm-v2")
         self.assertEqual(analyze.call_count, 1)
         self.assertEqual(analyze.call_args.args[2], b"baseline")
         with Image.open(BytesIO(analysis.evidence)) as evidence:
@@ -77,7 +77,7 @@ class ScreenshotTest(unittest.TestCase):
         repeated = screenshot("gray", True)
         with patch("app.inspection.analyze", return_value=checks()) as analyze:
             analysis, evidence = analyze_burst(repeated, [repeated] * 5, duration_seconds=2)
-        self.assertEqual(analysis.analyzer_version, "vision-llm-burst-v1")
+        self.assertEqual(analysis.analyzer_version, "vision-llm-burst-v2")
         self.assertEqual(analyze.call_count, 1)
         self.assertEqual(analyze.call_args.args[1], evidence)
         self.assertEqual(analyze.call_args.args[4], 2)
@@ -185,7 +185,7 @@ class RecognitionApiTest(unittest.TestCase):
                 "/api/recognitions", data={**data, "burst_duration_seconds": "2"}, files=files,
             )
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.json()["analyzer_version"], "vision-llm-burst-v1")
+        self.assertEqual(response.json()["analyzer_version"], "vision-llm-burst-v2")
         self.assertEqual(response.json()["outcome"], "flagged")
         record, primary, extra, duration = save.call_args.args
         self.assertEqual((len(extra), duration), (5, 2.0))

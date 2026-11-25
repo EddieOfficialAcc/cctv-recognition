@@ -173,7 +173,7 @@ indexes and foreign keys. `NVARCHAR` metadata
 supports both Traditional and Simplified Chinese. No database changes happen
 merely by opening the UI or changing its language.
 
-The `vision-llm-v1` analyzer requests signal, timestamp reading and scene
+The `vision-llm-v2` analyzer requests signal, timestamp reading and scene
 analysis in a single model call. A matching approved baseline is supplied for
 scene comparison when available. Without a baseline, a scene pass is changed
 to **Not assessed**; obvious visible problems can still be flagged. The model
@@ -206,6 +206,7 @@ new reference, choose **Approve this screenshot as baseline** and confirm.
 Each approval is appended to the database; it references the original evidence
 rather than replacing it. The current reference is the most recently approved
 one for the exact region, shop code and camera name, including letter case.
+It is not necessarily an image from yesterday.
 Use consistent camera names across uploads.
 
 Approval is not attributed to an authenticated user and the UI has no approval
@@ -214,14 +215,19 @@ uploads include the approved baseline in the vision request.
 
 ### Timestamp verification
 
-The vision model reads the camera timestamp; no separate OCR library is used.
-The backend compares an unambiguous `YYYY-MM-DD HH:MM:SS` reading, assumed to
-be Hong Kong time, with the supplied actual capture time. It does not
-substitute upload time. The default drift threshold is 180 seconds, configurable
+The vision model checks the current screenshot's upper-left timestamp for
+presence and readability and reads its date and time; no separate OCR library
+is used. The backend validates the model's normalized `YYYY-MM-DD HH:MM:SS`
+reading and compares it, assumed to be Hong Kong/Macau time (UTC+8), with the
+supplied actual capture time. It does not substitute upload time. The record
+shows the reading, capture time, signed difference (camera minus capture time),
+configured threshold and reason for the result. The default drift threshold is 180 seconds, configurable
 with `VISION_DRIFT_SECONDS`. Since the form captures time to the minute, results
 within 60 seconds of the threshold are **Not assessed**. Missing capture time
 and unsupported or unreadable timestamps are also **Not assessed**. The
-model's reading can be wrong and requires manual verification.
+model's reading can be wrong and requires manual verification. A still image
+cannot establish that the camera clock is advancing. Existing records retain
+their original results and do not have the new evidence details.
 
 The table includes evidence thumbnails, shop/region, upload time, individual
 check statuses, overall result and operator review. Filters and pagination run

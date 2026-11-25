@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { isLanguage, messages, translate } from '../src/messages.ts'
+import { parseTimestampDetails } from '../src/timestamp.ts'
 
 test('all translations interpolate the same parameters without leaving tokens', () => {
   for (const [key, english] of Object.entries(messages.en)) {
@@ -26,4 +27,16 @@ test('saved language values are restricted to the three supported locales', () =
   assert.ok(isLanguage('zh-Hans'))
   assert.ok(isLanguage('en'))
   for (const value of [null, '', 'zh', 'en-US', '__proto__']) assert.equal(isLanguage(value), false)
+})
+
+test('timestamp details preserve signed differences and reject invalid stored data', () => {
+  const details = {
+    state: 'readable', reading: '2026-11-24 10:25:00',
+    difference_seconds: -300, threshold_seconds: 180, reason: 'outside',
+  }
+  assert.deepEqual(parseTimestampDetails(JSON.stringify(details)), details)
+  assert.equal(parseTimestampDetails('Camera timestamp differs from the supplied capture time by approximately 300 seconds.'), null)
+  assert.equal(parseTimestampDetails(JSON.stringify({ ...details, threshold_seconds: -1 })), null)
+  assert.equal(parseTimestampDetails(JSON.stringify({ ...details, reason: 'unknown' })), null)
+  assert.equal(parseTimestampDetails(JSON.stringify({ ...details, difference_seconds: '300' })), null)
 })
