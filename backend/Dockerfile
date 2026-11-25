@@ -17,7 +17,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \
     && adduser --disabled-password --gecos "" appuser
 
-COPY app/ ./app/
+COPY --chown=appuser:appuser app/ ./app/
 USER appuser
 
 EXPOSE 8000
