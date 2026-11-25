@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
-  categoryKeys, checkKeys, fetchRecords, outcomeKeys, regionKeys, reviewKeys,
+  authRequest, categoryKeys, checkKeys, fetchRecords, outcomeKeys, regionKeys, reviewKeys,
   type RecognitionPage, type RecognitionRecord,
 } from './api'
 import { EvidenceImage } from './components/EvidenceImage'
@@ -10,7 +10,7 @@ import { UploadDialog } from './components/UploadDialog'
 import { useLocale } from './localization'
 import { isLanguage } from './messages'
 
-export function RecognitionWorkspace({ apiStatus }: { apiStatus: string }) {
+export function RecognitionWorkspace({ apiStatus, onLogout }: { apiStatus: string; onLogout: () => void }) {
   const { language, setLanguage, storageError, t, formatDate, errorMessage, checkExplanation } = useLocale()
   const [data, setData] = useState<RecognitionPage | null>(null)
   const [loading, setLoading] = useState(true)
@@ -24,6 +24,7 @@ export function RecognitionWorkspace({ apiStatus }: { apiStatus: string }) {
   const [uploadOpen, setUploadOpen] = useState(false)
   const [selected, setSelected] = useState<RecognitionRecord | null>(null)
   const [notice, setNotice] = useState<RecognitionRecord | null>(null)
+  const [logoutError, setLogoutError] = useState(false)
   const hasFilters = Boolean(search || outcome || review || region)
 
   useEffect(() => {
@@ -101,6 +102,14 @@ export function RecognitionWorkspace({ apiStatus }: { apiStatus: string }) {
       <header className="topbar">
         <div className="breadcrumb"><span>{t('operations')}</span><Icon name="chevron" size={14} /><strong>{t('recognitionRecords')}</strong></div>
         <div className="topbar-actions">
+        <button className="text-button" onClick={() => {
+          setLogoutError(false)
+          void authRequest('logout').then(onLogout).catch(error => {
+            if (error instanceof Error && 'status' in error && error.status === 401) { onLogout(); return }
+            console.error('Logout failed:', error)
+            setLogoutError(true)
+          })
+        }}>{t('loginSignOut')}</button>
         <label className="language-selector"><span>{t('language')}</span>
           <select value={language} onChange={event => {
             if (isLanguage(event.target.value)) setLanguage(event.target.value)
@@ -117,6 +126,7 @@ export function RecognitionWorkspace({ apiStatus }: { apiStatus: string }) {
         </div>
       </header>
       <main id="main-content">
+        {logoutError && <div className="error-message language-warning" role="alert">{t('loginLogoutError')}</div>}
         <div className="page-heading">
           <div><p className="eyebrow">{t('qualityAssurance')}</p><h1>{t('recognitionRecords')}</h1>
             <p className="page-description">{t('pageDescription')}</p>

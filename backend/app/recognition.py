@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Path, Query, 
 from fastapi.responses import Response
 from pydantic import ValidationError
 
+from app.auth import require_user
 from app import recognition_repository as repository
 from app.inspection import (
     MAX_BURST_FRAME_BYTES, MAX_UPLOAD_BYTES, InvalidScreenshot, analyze_burst, analyze_screenshot,
@@ -32,7 +33,7 @@ def database_errors():
 
 
 router = APIRouter(
-    prefix="/api/recognitions", tags=["recognitions"], dependencies=[Depends(database_errors)],
+    prefix="/api/recognitions", tags=["recognitions"], dependencies=[Depends(require_user), Depends(database_errors)],
 )
 
 

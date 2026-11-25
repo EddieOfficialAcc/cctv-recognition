@@ -89,6 +89,7 @@ async function request<T>(
 ): Promise<T> {
   const response = await fetch(url, options)
   if (!response.ok) {
+    if (response.status === 401) window.dispatchEvent(new Event('cctv-session-expired'))
     let message = `Request failed (HTTP ${response.status}). Please try again.`
     if (response.headers.get('content-type')?.includes('application/json')) {
       const body: unknown = await response.json()
@@ -119,12 +120,12 @@ export function fetchRecords(params: URLSearchParams, signal: AbortSignal) {
 }
 
 export function uploadScreenshot(body: FormData) {
-  return request('/api/recognitions', isRecord, { method: 'POST', body })
+  return request('/api/recognitions', isRecord, { method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' }, body })
 }
 
 export function saveReview(id: string, status: ReviewStatus, note: string) {
   return request(`/api/recognitions/${id}/review`, isRecord, {
-    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    method: 'PATCH', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
     body: JSON.stringify({ status, note }),
   })
 }
@@ -153,7 +154,29 @@ export function fetchBaseline(id: string) {
 }
 
 export function approveBaseline(id: string) {
-  return request(`/api/recognitions/${id}/baseline`, isBaseline, { method: 'POST' })
+  return request(`/api/recognitions/${id}/baseline`, isBaseline, { method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+}
+
+export async function authRequest(path: 'login' | 'session' | 'logout', body?: { username: string; password: string }, signal?: AbortSignal) {
+  const response = await fetch(`/api/auth/${path}`, {
+    method: path === 'session' ? 'GET' : 'POST',
+    headers: path === 'session' ? undefined : { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+    body: body ? JSON.stringify(body) : undefined,
+    signal,
+  })
+  if (!response.ok) throw new AuthError(response.status)
+  const value: unknown = await response.json()
+  if (!isObject(value) || (path === 'logout' ? value.status !== 'ok' : typeof value.username !== 'string')) {
+    throw new AuthError(0)
+  }
+}
+
+export class AuthError extends Error {
+  readonly status: number
+  constructor(status: number) {
+    super(`Authentication request failed (HTTP ${status}).`)
+    this.status = status
+  }
 }
 
 export const reviewKeys = {

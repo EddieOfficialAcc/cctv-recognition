@@ -1,5 +1,26 @@
 -- Run in the application's SQL Server database.
 -- Existing tables are preserved. Text metadata uses Unicode-capable NVARCHAR.
+IF OBJECT_ID(N'dbo.auth_users', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.auth_users (
+        id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
+        username VARCHAR(64) COLLATE Latin1_General_100_BIN2 NOT NULL UNIQUE,
+        password_hash VARCHAR(256) NOT NULL,
+        is_active BIT NOT NULL DEFAULT 1,
+        failed_attempts INT NOT NULL DEFAULT 0,
+        locked_until DATETIME2 NULL,
+        created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+    );
+END;
+IF OBJECT_ID(N'dbo.auth_sessions', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.auth_sessions (
+        token_hash BINARY(32) NOT NULL PRIMARY KEY,
+        user_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.auth_users(id) ON DELETE CASCADE,
+        expires_at DATETIME2 NOT NULL
+    );
+    CREATE INDEX IX_auth_sessions_expiry ON dbo.auth_sessions (expires_at);
+END;
 IF OBJECT_ID(N'dbo.recognition_records', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.recognition_records (

@@ -26,7 +26,6 @@ export function useLanguageState() {
 
   useEffect(() => {
     document.documentElement.lang = language
-    document.title = `${translate(language, 'recognitionRecords')} | RetailVision`
   }, [language])
 
   function setLanguage(next: Language) {

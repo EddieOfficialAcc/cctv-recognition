@@ -13,8 +13,8 @@ Vite and Tailwind CSS frontend and a Python FastAPI backend.
 The screenshot workflow supports validated uploads, persisted recognition
 results and evidence, a searchable/paginated inspection table, and operator
 review with notes. One vision API request analyzes the screenshot and optional
-burst frames and approved baseline. Direct device connections, automated
-capture and authentication are not yet implemented.
+burst frames and approved baseline. Direct device connections and automated
+capture are not yet implemented.
 The health endpoint checks the API process, not any camera or database.
 
 ## Local development (Windows PowerShell)
@@ -42,6 +42,11 @@ npm run dev
 Open the URL printed by Vite (normally http://localhost:5173). Its development
 server forwards `/api` requests to FastAPI at http://127.0.0.1:8000. API
 documentation is available at http://127.0.0.1:8000/docs.
+
+The entry screen requires an account. Set up SQL Server, the schema, and an
+account as described below before signing in. For local HTTP development only,
+set `AUTH_COOKIE_SECURE=false` in `backend\.env`. The default is `true` and
+requires HTTPS, including in production.
 
 ## SQL Server connection
 
@@ -107,6 +112,32 @@ authorized to create tables and indexes:
 Set-Location backend
 .\.venv\Scripts\python -m app.schema
 ```
+
+This also creates `dbo.auth_users` and `dbo.auth_sessions`; the SQL statements
+are in `backend/app/schema.sql` and can be run in a SQL Server client instead.
+Create the first account interactively (use the application runtime login if it
+has INSERT permission on `dbo.auth_users`):
+
+```powershell
+# From backend/, after applying the schema:
+.\.venv\Scripts\python -m app.create_user operator
+```
+
+Enter and confirm a password of 12–256 characters at the prompts. Usernames are
+case-insensitive and allow ASCII letters, numbers, `.`, `_` and `-` (1–64
+characters). The command stores a salted scrypt hash, not the password. There
+is no self-service registration or password reset. To disable an account, set
+`is_active` to `0`; its existing sessions will immediately stop working.
+
+Login creates an eight-hour server-side session with an HttpOnly, SameSite=Strict
+cookie. Sign-out deletes that session. Five failed attempts lock an account for
+15 minutes. To revoke all sessions for an account, delete its rows in
+`dbo.auth_sessions`. The runtime database login needs SELECT and UPDATE on
+`dbo.auth_users`, and SELECT, INSERT and DELETE on `dbo.auth_sessions`.
+Account creation additionally needs INSERT on `dbo.auth_users`. Keep schema
+administration privileges separate from the runtime account. The application
+does not provide roles, MFA, audit attribution, distributed IP rate limiting,
+or account recovery. Restrict access to trusted users and networks.
 
 This idempotent setup creates `dbo.recognition_records` (camera/shop metadata,
 upload and optional capture times, overall result, review status/note/time,
@@ -225,7 +256,7 @@ deployments should configure an equivalent ingress request-size limit.
 
 The frontend and backend run in separate containers. The existing
 `sqlserver-db` container remains independent; Compose does not create, stop,
-or delete it. **The application has no authentication.** Restrict port 8080
+or delete it. Restrict port 8080
 to trusted internal users or a VPN and configure HTTPS at a trusted ingress.
 Do not expose it directly to the internet. Also restrict the already
 published SQL Server port 1433 using appropriate network controls.
@@ -284,7 +315,8 @@ curl -fsS http://127.0.0.1:8080/api/health/database
 The database health check verifies connectivity, not the recognition schema.
 Apply `backend/app/schema.sql` to the application database using an authorized
 SQL client before using uploads, and grant the runtime login SELECT, INSERT and
-UPDATE on the four recognition tables. Alternatively, run the schema command
+UPDATE on the four recognition tables and the authentication permissions
+described above. Alternatively, run the schema command
 in a one-off container with a separately provisioned administrator env file:
 
 ```sh
@@ -295,8 +327,11 @@ BACKEND_ENV_FILE=/secure/path/schema-admin.env docker compose -p cctv-recognitio
 Keep that file restricted and remove it when no longer needed. Reapply the
 additive schema when a release requires it; deployment does not run schema
 changes automatically. Back up the database before upgrades.
+Create an application account interactively with
+`docker compose -p cctv-recognition -f compose.yaml -f compose.server.yaml run --rm --no-deps backend python -m app.create_user operator`.
+Keep `AUTH_COOKIE_SECURE=true` and access the app through HTTPS.
 
-Visit `http://SERVER_ADDRESS:8080` only over the restricted internal network.
+Visit the application through the HTTPS ingress on the restricted internal network.
 Nginx serves the frontend and proxies `/api/` to the backend; only the frontend
 port is published by Compose. For logs or shutdown, run the same Compose command
 with `logs -f` or `down` instead of `up ...`. `down` does not stop the

@@ -10,6 +10,7 @@ from PIL import Image, ImageDraw
 
 from app.inspection import InvalidScreenshot, MAX_UPLOAD_BYTES, analyze_burst, analyze_screenshot
 from app.main import app
+from app.auth import require_user
 from app import recognition_repository as repository
 from app.recognition_models import Baseline, RecognitionCheck, RecognitionRecord
 from app.vision_analysis import AnalysisError
@@ -98,6 +99,8 @@ class ScreenshotTest(unittest.TestCase):
 
 class RecognitionApiTest(unittest.TestCase):
     def setUp(self) -> None:
+        app.dependency_overrides[require_user] = lambda: "test-user"
+        self.addCleanup(app.dependency_overrides.pop, require_user, None)
         self.client = TestClient(app)
         self.addCleanup(self.client.close)
         baseline = patch("app.recognition.repository.get_baseline_evidence", return_value=None)

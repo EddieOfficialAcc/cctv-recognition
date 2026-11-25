@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from app.main import app
+from app.auth import require_user
 from app.vision_analysis import AnalysisError, VisionSettings, _request, _timestamp_check, analyze
 
 
@@ -63,6 +64,8 @@ class VisionAnalysisTest(unittest.TestCase):
         self.assertEqual([check.status for check in checks], ["pass", "not_assessed", "not_assessed"])
 
     def test_upload_to_persisted_checks_uses_one_model_call(self):
+        app.dependency_overrides[require_user] = lambda: "test-user"
+        self.addCleanup(app.dependency_overrides.pop, require_user, None)
         body = {"choices": [{"message": {"content": json.dumps(model_result())}}]}
         screenshot = BytesIO()
         Image.new("RGB", (20, 20), "gray").save(screenshot, format="PNG")
