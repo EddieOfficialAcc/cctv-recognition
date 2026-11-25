@@ -66,13 +66,20 @@ class AuthenticationDatabaseTest(unittest.TestCase):
         self.cursor.execute.return_value.fetchone.return_value = SimpleNamespace(
             id="user-id", password_hash="hash", is_active=True, failed_attempts=2, locked_until=None,
         )
-        with patch("app.auth.verify_password", return_value=True):
-            token = auth.authenticate("Admin", "correct")
-        self.assertIsNotNone(token)
-        insert = self.cursor.execute.call_args_list[-1].args
-        self.assertIn("INSERT INTO dbo.auth_sessions", insert[0])
-        self.assertEqual(insert[1], auth.hashlib.sha256(token.encode("ascii")).digest())
-        self.assertNotEqual(insert[1], token)
+        now = datetime(2026, 11, 25, 8, 0, tzinfo=timezone.utc)
+        for remember_me, seconds in [(False, 8 * 60 * 60), (True, 30 * 24 * 60 * 60)]:
+            with self.subTest(remember_me=remember_me), \
+                 patch("app.auth.verify_password", return_value=True), \
+                 patch("app.auth.datetime") as clock:
+                clock.now.return_value = now
+                token = auth.authenticate("Admin", "correct", remember_me)
+                self.assertIsNotNone(token)
+                insert = self.cursor.execute.call_args_list[-1].args
+                self.assertIn("INSERT INTO dbo.auth_sessions", insert[0])
+                self.assertEqual(insert[1], auth.hashlib.sha256(token.encode("ascii")).digest())
+                self.assertNotEqual(insert[1], token)
+                self.assertEqual(insert[3], now.replace(tzinfo=None) + timedelta(seconds=seconds))
+                self.assertEqual(insert[4], remember_me)
 
 
 class AuthApiTest(unittest.TestCase):
@@ -99,6 +106,39 @@ class AuthApiTest(unittest.TestCase):
             self.assertEqual(self.client.post("/api/auth/logout").status_code, 403)
             self.assertEqual(self.client.post("/api/auth/logout", headers=self.headers).status_code, 200)
             delete.assert_called_once_with("secret-token")
+
+    def test_remember_me_controls_cookie_persistence_and_authentication(self):
+        for choice in [None, False, True]:
+            with self.subTest(remember_me=choice), \
+                 patch("app.auth.authenticate", return_value="secret-token") as authenticate:
+                body = {"username": "Operator", "password": "password"}
+                if choice is not None:
+                    body["remember_me"] = choice
+                response = self.client.post("/api/auth/login", headers=self.headers, json=body)
+                self.assertEqual(response.status_code, 200)
+                authenticate.assert_called_once_with("Operator", "password", choice is True)
+                cookie = response.headers["set-cookie"]
+                self.assertIn("HttpOnly", cookie)
+                self.assertIn("Secure", cookie)
+                self.assertIn("SameSite=strict", cookie)
+                self.assertEqual(response.headers["cache-control"], "no-store")
+                if choice:
+                    self.assertIn("Max-Age=2592000", cookie)
+                else:
+                    self.assertNotIn("Max-Age", cookie)
+                    self.assertNotIn("expires=", cookie.lower())
+                self.assertNotIn("password", cookie)
+
+    def test_remember_me_requires_a_boolean(self):
+        with patch("app.auth.authenticate") as authenticate:
+            for value in ["true", "false", 1, None]:
+                with self.subTest(value=value):
+                    response = self.client.post("/api/auth/login", headers=self.headers, json={
+                        "username": "operator", "password": "password", "remember_me": value,
+                    })
+                    self.assertEqual(response.status_code, 422)
+                    self.assertNotIn("set-cookie", response.headers)
+            authenticate.assert_not_called()
 
     def test_invalid_credentials_and_database_failure_are_explicit(self):
         with patch("app.auth.authenticate", return_value=None):
@@ -145,9 +185,10 @@ class AuthApiTest(unittest.TestCase):
              patch("app.recognition.repository.get_evidence", return_value=b"image"):
             login = self.client.post(
                 "/api/auth/login", headers=self.headers,
-                json={"username": "Operator", "password": "correct password"},
+                json={"username": "Operator", "password": "correct password", "remember_me": True},
             )
             self.assertEqual(login.status_code, 200)
+            self.assertIn("Max-Age=2592000", login.headers["set-cookie"])
             self.assertEqual(self.client.get("/api/auth/session").json(), {"username": "operator"})
             evidence_path = "/api/recognitions/00000000-0000-0000-0000-000000000001/evidence"
             self.assertEqual(self.client.get(evidence_path).content, b"image")

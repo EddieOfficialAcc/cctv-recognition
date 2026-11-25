@@ -8,6 +8,7 @@ export function LoginScreen({ onLogin, sessionError }: { onLogin: () => void; se
   const { language, setLanguage, storageError, t } = useLocale()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [rememberMe, setRememberMe] = useState(false)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<'invalid' | 'unavailable' | null>(null)
   const [initialError, setInitialError] = useState(sessionError)
@@ -40,7 +41,7 @@ export function LoginScreen({ onLogin, sessionError }: { onLogin: () => void; se
         <form className="login-form" onSubmit={event => {
           event.preventDefault()
           setPending(true); setError(null); setInitialError(false)
-          void authRequest('login', { username, password }).then(() => {
+          void authRequest('login', { username, password, remember_me: rememberMe }).then(() => {
             setPassword(''); onLogin()
           }).catch(cause => {
             if (!(cause instanceof AuthError && cause.status === 401)) console.error('Login request failed:', cause)
@@ -55,6 +56,14 @@ export function LoginScreen({ onLogin, sessionError }: { onLogin: () => void; se
             <input type="password" autoComplete="current-password" value={password} maxLength={256} required
               onChange={event => setPassword(event.target.value)} />
           </label>
+          <div>
+            <label className="login-remember">
+              <input type="checkbox" checked={rememberMe} disabled={pending} aria-describedby="remember-me-hint"
+                onChange={event => setRememberMe(event.target.checked)} />
+              {t('loginRememberMe')}
+            </label>
+            <p className="login-remember-hint" id="remember-me-hint">{t('loginRememberMeHint')}</p>
+          </div>
           <button type="submit" className="button primary" disabled={pending}>{t(pending ? 'loginSigningIn' : 'loginSignIn')}</button>
         </form>
       </div>

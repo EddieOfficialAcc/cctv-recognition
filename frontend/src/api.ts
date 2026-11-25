@@ -157,7 +157,7 @@ export function approveBaseline(id: string) {
   return request(`/api/recognitions/${id}/baseline`, isBaseline, { method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
 }
 
-export async function authRequest(path: 'login' | 'session' | 'logout', body?: { username: string; password: string }, signal?: AbortSignal) {
+export async function authRequest(path: 'login' | 'session' | 'logout', body?: { username: string; password: string; remember_me?: boolean }, signal?: AbortSignal) {
   const response = await fetch(`/api/auth/${path}`, {
     method: path === 'session' ? 'GET' : 'POST',
     headers: path === 'session' ? undefined : { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },

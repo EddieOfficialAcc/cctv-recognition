@@ -17,9 +17,15 @@ BEGIN
     CREATE TABLE dbo.auth_sessions (
         token_hash BINARY(32) NOT NULL PRIMARY KEY,
         user_id UNIQUEIDENTIFIER NOT NULL REFERENCES dbo.auth_users(id) ON DELETE CASCADE,
-        expires_at DATETIME2 NOT NULL
+        expires_at DATETIME2 NOT NULL,
+        remember_me BIT NOT NULL CONSTRAINT DF_auth_sessions_remember_me DEFAULT 0
     );
     CREATE INDEX IX_auth_sessions_expiry ON dbo.auth_sessions (expires_at);
+END;
+IF COL_LENGTH(N'dbo.auth_sessions', N'remember_me') IS NULL
+BEGIN
+    ALTER TABLE dbo.auth_sessions ADD remember_me BIT NOT NULL
+        CONSTRAINT DF_auth_sessions_remember_me DEFAULT 0 WITH VALUES;
 END;
 IF OBJECT_ID(N'dbo.recognition_records', N'U') IS NULL
 BEGIN

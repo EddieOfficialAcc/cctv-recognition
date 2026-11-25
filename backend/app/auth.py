@@ -18,6 +18,7 @@ from app.database import DatabaseSettings, connect
 logger = logging.getLogger(__name__)
 COOKIE_NAME = "cctv_session"
 SESSION_SECONDS = 8 * 60 * 60
+REMEMBER_ME_SECONDS = 30 * 24 * 60 * 60
 USERNAME_PATTERN = re.compile(r"[a-z0-9._-]{1,64}\Z")
 
 
@@ -74,7 +75,7 @@ def create_user(username: str, password: str) -> None:
             )
 
 
-def authenticate(username: str, password: str) -> str | None:
+def authenticate(username: str, password: str, remember_me: bool = False) -> str | None:
     username = normalize_username(username)
     with closing(connect(DatabaseSettings())) as connection:
         connection.autocommit = False
@@ -109,9 +110,10 @@ def authenticate(username: str, password: str) -> str | None:
                 )
                 cursor.execute("DELETE FROM dbo.auth_sessions WHERE expires_at <= ?", now)
                 cursor.execute(
-                    "INSERT INTO dbo.auth_sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)",
+                    "INSERT INTO dbo.auth_sessions (token_hash, user_id, expires_at, remember_me) VALUES (?, ?, ?, ?)",
                     hashlib.sha256(token.encode("ascii")).digest(), row.id,
-                    now + timedelta(seconds=SESSION_SECONDS),
+                    now + timedelta(seconds=REMEMBER_ME_SECONDS if remember_me else SESSION_SECONDS),
+                    remember_me,
                 )
             connection.commit()
             return token
@@ -169,6 +171,7 @@ def require_user(request: Request) -> str:
 class LoginRequest(BaseModel):
     username: str = Field(min_length=1, max_length=64)
     password: str = Field(min_length=1, max_length=256)
+    remember_me: bool = Field(default=False, strict=True)
 
 
 router = APIRouter(prefix="/api/auth", tags=["authentication"])
@@ -179,14 +182,15 @@ def login(body: LoginRequest, request: Request, response: Response) -> dict[str,
     csrf_check(request)
     try:
         settings = AuthSettings()
-        token = authenticate(body.username, body.password)
+        token = authenticate(body.username, body.password, body.remember_me)
     except (pyodbc.Error, ValidationError) as error:
         logger.error("Login failed due to configuration or storage (%s).", type(error).__name__)
         raise HTTPException(503, "Authentication storage unavailable.") from None
     if not token:
         raise HTTPException(401, "Invalid credentials or account unavailable.")
     response.set_cookie(
-        COOKIE_NAME, token, max_age=SESSION_SECONDS, httponly=True, secure=settings.cookie_secure,
+        COOKIE_NAME, token, max_age=REMEMBER_ME_SECONDS if body.remember_me else None,
+        httponly=True, secure=settings.cookie_secure,
         samesite="strict", path="/",
     )
     response.headers["Cache-Control"] = "no-store"

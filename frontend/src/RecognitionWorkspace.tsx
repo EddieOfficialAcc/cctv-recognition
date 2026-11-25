@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   authRequest, categoryKeys, checkKeys, fetchRecords, outcomeKeys, regionKeys, reviewKeys,
   type RecognitionPage, type RecognitionRecord,
@@ -25,7 +25,27 @@ export function RecognitionWorkspace({ apiStatus, onLogout }: { apiStatus: strin
   const [selected, setSelected] = useState<RecognitionRecord | null>(null)
   const [notice, setNotice] = useState<RecognitionRecord | null>(null)
   const [logoutError, setLogoutError] = useState(false)
+  const [smallScreen, setSmallScreen] = useState(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 640px)').matches)
+  const [sidebarPreference, setSidebarPreference] = useState<boolean | null>(null)
+  const sidebarVisible = sidebarPreference ?? !smallScreen
+  const sidebarToggleRef = useRef<HTMLButtonElement>(null)
+  const focusSidebarToggle = useRef(false)
   const hasFilters = Boolean(search || outcome || review || region)
+
+  useEffect(() => {
+    if (focusSidebarToggle.current) {
+      sidebarToggleRef.current?.focus()
+      focusSidebarToggle.current = false
+    }
+  }, [sidebarVisible])
+
+  useEffect(() => {
+    const query = window.matchMedia('(max-width: 640px)')
+    const update = () => setSmallScreen(query.matches)
+    update()
+    query.addEventListener('change', update)
+    return () => query.removeEventListener('change', update)
+  }, [])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -80,15 +100,20 @@ export function RecognitionWorkspace({ apiStatus, onLogout }: { apiStatus: strin
     { label: 'awaitingReview', value: data?.summary.unreviewed, icon: 'clock', tone: 'purple', detail: 'noDecision' },
   ] as const
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.page_size)) : 1
+  const sidebarToggle = <button ref={sidebarToggleRef} type="button" className="sidebar-toggle" aria-controls="sidebar" aria-expanded={sidebarVisible}
+    aria-label={t(sidebarVisible ? 'hideSidebar' : 'showSidebar')} title={t(sidebarVisible ? 'hideSidebar' : 'showSidebar')}
+    onClick={() => { focusSidebarToggle.current = true; setSidebarPreference(!sidebarVisible) }}>
+    <Icon name="sidebar" size={19} />
+  </button>
 
-  return <div className="app-shell">
+  return <div className={`app-shell${sidebarVisible ? '' : ' sidebar-hidden'}`}>
     <a className="skip-link" href="#main-content">{t('skipLink')}</a>
-    <aside className="sidebar">
+    <aside id="sidebar" className="sidebar" hidden={!sidebarVisible}>
       <a className="brand" href="/"><span className="brand-mark"><Icon name="camera" size={25} /></span>
         <span>RETAIL<span className="brand-accent">VISION</span><small>{t('platform')}</small></span>
       </a>
       <div className="workspace-label">{t('operationsWorkspace')}</div>
-      <nav aria-label={t('mainNavigation')}><a className="nav-item active" href="#main-content" aria-current="page">
+      <nav aria-label={t('mainNavigation')}><a className="nav-item active" href="#main-content" aria-current="page" aria-label={t('recognitionRecords')}>
         <Icon name="grid" size={19} /><span>{t('recognitionRecords')}</span><span className="nav-dot" />
       </a></nav>
       <div className="sidebar-scope">
@@ -96,11 +121,16 @@ export function RecognitionWorkspace({ apiStatus, onLogout }: { apiStatus: strin
         <div><Icon name="upload" size={17} /><span>{t('screenshotUploads')}</span></div>
         <p>{t('captureExternally')}<br />{t('inspectHere')}</p>
       </div>
-      <div className="sidebar-bottom"><Icon name="shield" size={18} /><div>{t('internalOperations')}<small>{t('regions')}</small></div></div>
+      <div className="sidebar-bottom"><Icon name="shield" size={18} /><div>{t('internalOperations')}<small>{t('regions')}</small></div>
+        {sidebarVisible && sidebarToggle}
+      </div>
     </aside>
     <div className="workspace">
       <header className="topbar">
-        <div className="breadcrumb"><span>{t('operations')}</span><Icon name="chevron" size={14} /><strong>{t('recognitionRecords')}</strong></div>
+        <div className="topbar-leading">
+          {!sidebarVisible && sidebarToggle}
+          <div className="breadcrumb"><span>{t('operations')}</span><Icon name="chevron" size={14} /><strong>{t('recognitionRecords')}</strong></div>
+        </div>
         <div className="topbar-actions">
         <button className="text-button" onClick={() => {
           setLogoutError(false)

@@ -130,7 +130,18 @@ is no self-service registration or password reset. To disable an account, set
 `is_active` to `0`; its existing sessions will immediately stop working.
 
 Login creates an eight-hour server-side session with an HttpOnly, SameSite=Strict
-cookie. Sign-out deletes that session. Five failed attempts lock an account for
+browser-session cookie by default (browsers with session restore may retain it).
+Selecting **Remember me for 30 days** instead creates a persistent cookie and
+server-side session that expire 30 days after login, without extending on use.
+Use this option only on a trusted device. Password autofill is handled by the
+browser's password manager; the application never stores passwords in browser
+storage. Both session types store only the token hash in `dbo.auth_sessions`,
+with the choice in its `remember_me` column. Re-run `python -m app.schema` from
+`backend/` before deploying this update; the additive migration defaults existing
+sessions to `remember_me = 0` without changing their expiry.
+The login API accepts an optional boolean `remember_me` (default `false`).
+Sign-out deletes the current session, including remembered sessions.
+Five failed attempts lock an account for
 15 minutes. To revoke all sessions for an account, delete its rows in
 `dbo.auth_sessions`. The runtime database login needs SELECT and UPDATE on
 `dbo.auth_users`, and SELECT, INSERT and DELETE on `dbo.auth_sessions`.
