@@ -10,17 +10,25 @@ import { Icon } from './Icon'
 
 export function AnalysisProgress({ summary, saved }: { summary: AnalysisPage['summary']; saved: number }) {
   const { t } = useLocale()
-  return <>
+  return <div className="analysis-progress">
     <label>{t('aiProgress', { done: summary.completed + summary.failed, total: summary.total, saved })}
       <progress max={Math.max(1, summary.total)} value={summary.completed + summary.failed} aria-label={t('aiProgressLabel')} />
     </label>
-    <p role="status">{t('aiCounts', {
+    <p className="sr-only" role="status">{t('aiCounts', {
       queued: summary.queued, analyzing: summary.analyzing, completed: summary.completed,
       failed: summary.failed, flagged: summary.flagged,
     })}</p>
+    <dl className="analysis-metrics">
+      {([
+        ['queued', 'aiQueued'], ['analyzing', 'aiAnalyzing'], ['completed', 'runCompleted'],
+        ['failed', 'runFailed'], ['flagged', 'flagged'],
+      ] as const).map(([key, title]) => <div key={key} className={`analysis-metric analysis-metric-${key}`}>
+        <dt>{t(title)}</dt><dd>{summary[key]}</dd>
+      </div>)}
+    </dl>
     {!summary.worker_online && (summary.queued > 0 || summary.analyzing > 0) &&
       <p className="error-message" role="alert">{t('aiOffline')}</p>}
-  </>
+  </div>
 }
 
 export function SnapshotAnalysis({ run, manual, onSelect }: {
@@ -33,6 +41,7 @@ export function SnapshotAnalysis({ run, manual, onSelect }: {
   const [error, setError] = useState<Error | null>(null)
   const [actionError, setActionError] = useState<Error | null>(null)
   const [busy, setBusy] = useState(false)
+  const [autoSaved, setAutoSaved] = useState(false)
   const [refresh, setRefresh] = useState(0)
   const [confirm, setConfirm] = useState(false)
   const [limit, setLimit] = useState<20 | null>(20)
@@ -86,27 +95,52 @@ export function SnapshotAnalysis({ run, manual, onSelect }: {
       <button className="text-button" disabled={busy} onClick={() => setRefresh(value => value + 1)}>{t('refresh')}</button>
     </div>
     <div className="worker-panel-body">
-      <p className="field-hint">{t('aiHint')}</p>
-      <p className="field-hint">{t('aiConsent')}</p>
-      <label><input type="checkbox" checked={settings?.auto_analyze ?? false}
-        disabled={busy || !settings || (!settings.configured && !settings.auto_analyze)}
-        onChange={event => { const checked = event.target.checked; void mutate(async () => setSettings(await setAutoAnalysis(checked))) }} />
-        {t('aiAuto')}</label>
+      <p className="field-hint">{t(manual ? 'aiReviewDescription' : 'aiScheduledReviewDescription')}</p>
       {settings && !settings.configured && <p className="error-message" role="alert">{t('aiConfigurationError')}</p>}
       {settings && !settings.worker_enabled && <p className="error-message" role="alert">{t('aiDisabled')}</p>}
       {error && <p className="error-message" role="alert">{errorMessage(error)}</p>}
       {actionError && <p className="error-message" role="alert">{errorMessage(actionError)}</p>}
       {run?.analysis_error && <p className="error-message" role="alert">{t('aiEnqueueError', { reason: run.analysis_error })}</p>}
-      {run && data && <AnalysisProgress summary={data.summary} saved={run.saved} />}
-      {run && <div className="configuration-actions">
-        {manual && <button className="button secondary" disabled={busy || !settings?.configured || captureRunning || !run.saved}
-          onClick={() => { setLimit(20); setConfirm(true) }}>{t('aiAnalyzeBatch')}</button>}
-        <button className="text-button" disabled={busy || !data?.summary.failed || !settings?.configured}
-          onClick={() => { void mutate(() => retryAnalysis(id, manual)) }}>{t('aiRetry')}</button>
-        <button className="text-button" disabled={!data?.summary.total} onClick={() => setView(true)}>{t('aiResults')}</button>
+      {!run && <p className="empty-state">{t('aiChooseRun')}</p>}
+      {run && !data && !error && <p role="status">{t('loadingTitle')}</p>}
+      {run && data && <>
+        <AnalysisProgress summary={data.summary} saved={run.saved} />
+        {data.summary.total < run.saved && <p className="field-hint">{t('aiBatchCoverage', {
+          total: data.summary.total, saved: run.saved,
+        })}</p>}
+      </>}
+      {run && <div className="analysis-actions">
+        <div className="configuration-actions">
+          {manual && <button className={`button ${data?.summary.total ? 'secondary' : 'primary'}`}
+            disabled={busy || !settings?.configured || captureRunning || !run.saved}
+            onClick={() => { setLimit(20); setConfirm(true) }}>{t('aiAnalyzeBatch')}</button>}
+          {Boolean(data?.summary.total) && <button className="button primary" onClick={() => setView(true)}>{t('aiResults')}</button>}
+          {Boolean(data?.summary.failed) && <button className="button secondary" disabled={busy || !settings?.configured}
+            onClick={() => { void mutate(() => retryAnalysis(id, manual)) }}>{t('aiRetry')}</button>}
+        </div>
         {Boolean(data?.summary.total) && <a className="text-button" href={reportUrl} download>{t('aiDownload')}</a>}
       </div>}
-      <p className="field-hint">{t('aiWorkerHint')}</p>
+      <p className="field-hint">{t('aiConsent')}</p>
+      <details className="report-help analysis-automation">
+        <summary>{t('aiAutomationSettings')}
+          {settings && <span className="count-badge">{t(settings.auto_analyze ? 'aiAutoOn' : 'aiAutoOff')}</span>}
+        </summary>
+        <div className="report-help-content">
+          <label className="report-option"><input type="checkbox" checked={settings?.auto_analyze ?? false}
+            aria-describedby="analysis-auto-hint"
+            disabled={busy || !settings || (!settings.configured && !settings.auto_analyze)}
+            onChange={event => {
+              const checked = event.target.checked
+              setAutoSaved(false)
+              void mutate(async () => { setSettings(await setAutoAnalysis(checked)); setAutoSaved(true) })
+            }} /><span>{t('aiAuto')}</span></label>
+          <p id="analysis-auto-hint">{t('aiAutoScope')}</p>
+          {autoSaved && <p role="status">{t('aiSettingsSaved')}</p>}
+        </div>
+      </details>
+      <details className="report-help"><summary>{t('aiHowItWorks')}</summary>
+        <div className="report-help-content"><p>{t('aiHint')}</p><p>{t('aiWorkerHint')}</p></div>
+      </details>
     </div>
     {confirm && <Dialog title={t('aiAnalyzeBatch')} subtitle={t('aiConsent')} onClose={() => setConfirm(false)}>
       <div className="dialog-body" id="dialog-description">

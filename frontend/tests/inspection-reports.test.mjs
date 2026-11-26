@@ -28,11 +28,17 @@ test('AI review progress, localization, queue API contracts and strict response 
       assert.match(progress, /<progress max="20" value="8"/)
       assert.match(progress, /1402/)
       assert.match(progress, /role="alert"/)
+      assert.match(progress, /class="analysis-metrics"/)
+      assert.match(progress, /<dd>6<\/dd>/)
+      assert.match(progress, /<dd>2<\/dd>/)
       const controls = renderToStaticMarkup(React.createElement(Provider, null,
         React.createElement(SnapshotAnalysis, { manual: true, onSelect() {} })))
       assert.ok(controls.includes(heading))
       assert.ok(controls.includes(auto))
       assert.match(controls, /SNAPSHOT_ANALYSIS_CONCURRENCY/)
+      assert.match(controls, /<details class="report-help analysis-automation">/)
+      assert.match(controls, /aria-describedby="analysis-auto-hint"/)
+      assert.doesNotMatch(controls, /<details[^>]*\sopen/)
     }
     const settings = { auto_analyze: false, configured: true, worker_enabled: true, worker_online: true, concurrency: 2 }
     const body = { summary, total: 20, page: 1, page_size: 20, items: [
@@ -94,6 +100,10 @@ test('inspection reports exposes bulk capture and run selection in all locales',
       assert.ok(html.includes(capture))
       assert.match(html, /option value="manual"/)
       assert.match(html, /camera-snapshots\/batches/)
+      assert.match(html, /role="tablist"/)
+      assert.match(html, /id="inspection-tab-capture"[^>]*aria-selected="true"/)
+      assert.match(html, /id="inspection-tab-analysis"[^>]*aria-selected="false"/)
+      assert.doesNotMatch(html, /type="checkbox"/)
       const progress = renderToStaticMarkup(React.createElement(Provider, null,
         React.createElement(InspectionProgress, {
           manual: true,

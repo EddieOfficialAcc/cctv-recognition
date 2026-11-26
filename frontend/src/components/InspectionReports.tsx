@@ -26,7 +26,6 @@ export function InspectionProgress({ run, manual, onViewReport }: {
       <a className="text-button" href={`/api/snapshot-batches/${id}/report`}
         download={`snapshot-batch-${id}.json`}>{t('batchDownloadReport')}</a>
     </div>}
-    <p className="field-hint">{t('captureProgressHint')}</p>
   </div>
 }
 
@@ -50,6 +49,7 @@ export function InspectionReports({ onSelect }: { onSelect: (record: Recognition
   const [exclusionError, setExclusionError] = useState<Error | null>(null)
   const [exclusionSaved, setExclusionSaved] = useState(false)
   const [viewReport, setViewReport] = useState<string | null>(null)
+  const [tab, setTab] = useState<'capture' | 'analysis'>('capture')
   const run = runs.find(entry => runKey(entry) === selected)
   const itemRevision = run ? `${run.status}:${run.completed}:${run.failed}:${run.skipped}:${run.interrupted}:${run.saved}` : ''
 
@@ -77,7 +77,7 @@ export function InspectionReports({ onSelect }: { onSelect: (record: Recognition
   }, [runs, error])
 
   useEffect(() => {
-    if (!selected) return
+    if (!selected || tab !== 'capture') return
     const controller = new AbortController()
     void fetchInspectionItems(selected, page, controller.signal, manual).then(result => {
       if (!controller.signal.aborted) setItems(result)
@@ -87,7 +87,7 @@ export function InspectionReports({ onSelect }: { onSelect: (record: Recognition
       setError(cause instanceof Error ? cause : new Error(String(cause)))
     })
     return () => controller.abort()
-  }, [selected, page, refresh, manual, itemRevision])
+  }, [selected, page, refresh, manual, itemRevision, tab])
 
   function reload() {
     setLoading(true); setError(null); setRefresh(value => value + 1)
@@ -128,13 +128,25 @@ export function InspectionReports({ onSelect }: { onSelect: (record: Recognition
     <div className="page-heading"><div><p className="eyebrow">{t('operations')}</p><h1>{t('inspectionReports')}</h1>
       <p className="page-description">{t('inspectionReportsDescription')}</p></div>
       <div className="configuration-actions">
-        <button className="button primary" disabled={starting || (manual && runs.some(run => run.status === 'running'))}
-          onClick={() => setConfirmBatch(true)}><Icon name="camera" size={16} />{t(starting ? 'batchStarting' : 'batchCaptureAll')}</button>
+        {tab === 'capture' && <button className="button primary" disabled={starting || (manual && runs.some(run => run.status === 'running'))}
+          onClick={() => setConfirmBatch(true)}><Icon name="camera" size={16} />{t(starting ? 'batchStarting' : 'batchCaptureAll')}</button>}
         <button className="button secondary" onClick={reload} disabled={loading}><Icon name="refresh" size={16} />{t('refresh')}</button>
       </div>
     </div>
-    <p className="field-hint">{t('batchArchiveHint')}</p>
-    <p className="field-hint">{t('batchSkipHint')}</p>
+    <div className="report-tabs" role="tablist" aria-label={t('reportViews')}>
+      {(['capture', 'analysis'] as const).map(value => <button key={value} type="button" role="tab"
+        id={`inspection-tab-${value}`} aria-controls={`inspection-panel-${value}`}
+        aria-selected={tab === value} tabIndex={tab === value ? 0 : -1}
+        onClick={() => setTab(value)} onKeyDown={event => {
+          let next: typeof tab
+          if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') next = tab === 'capture' ? 'analysis' : 'capture'
+          else if (event.key === 'Home') next = 'capture'
+          else if (event.key === 'End') next = 'analysis'
+          else return
+          event.preventDefault(); setTab(next); document.getElementById(`inspection-tab-${next}`)?.focus()
+        }}>{t(value === 'capture' ? 'reportCaptureTab' : 'aiReview')}</button>)}
+    </div>
+    <section className="records-panel report-selection" aria-label={t('reportSelection')}>
     <div className="filter-bar"><label>{t('batchRunType')} <select value={manual ? 'manual' : 'scheduled'}
       onChange={event => {
         setManual(event.target.value === 'manual'); setSelected(''); setItems(null); setRuns([])
@@ -142,26 +154,39 @@ export function InspectionReports({ onSelect }: { onSelect: (record: Recognition
       }}>
       <option value="scheduled">{t('batchScheduledRuns')}</option>
       <option value="manual">{t('batchManualRuns')}</option>
-    </select></label></div>
+    </select></label>
+      <label>{t(manual ? 'batchRun' : 'reportDate')} <select value={selected} disabled={!runs.length}
+        onChange={event => { setSelected(event.target.value); setItems(null); setPage(1); setError(null) }}>
+        {!runs.length && <option value="">{t(loading ? 'loadingTitle' : 'reportChooseRun')}</option>}
+        {runs.map(entry => <option key={runKey(entry)} value={runKey(entry)}>
+          {manual ? `${formatDate(entry.started_at, true)} · ${entry.id?.slice(0, 8)}` : entry.run_date}
+        </option>)}
+      </select></label>
+      {run && <span className="badge">{t(statusKeys[run.status] ?? 'runUnknown')}</span>}
+    </div>
+    </section>
+    {error && <div className="error-message" role="alert">{errorMessage(error)}</div>}
+    <div role="tabpanel" id="inspection-panel-analysis" aria-labelledby="inspection-tab-analysis" hidden={tab !== 'analysis'}>
+      {tab === 'analysis' && <SnapshotAnalysis key={`${manual}:${selected}`} run={run} manual={manual} onSelect={onSelect} />}
+    </div>
+    <div role="tabpanel" id="inspection-panel-capture" aria-labelledby="inspection-tab-capture" hidden={tab !== 'capture'}>
     {startError && <div className="error-message" role="alert">{errorMessage(startError)}</div>}
     {exclusionError && <div className="error-message" role="alert">{errorMessage(exclusionError)}</div>}
     {exclusionSaved && <p role="status">{t('batchExclusionSaved')}</p>}
-    {run && <InspectionProgress run={run} manual={manual} onViewReport={setViewReport} />}
-    <SnapshotAnalysis key={`${manual}:${selected}`} run={run} manual={manual} onSelect={onSelect} />
-    {error && <div className="error-message" role="alert">{errorMessage(error)}</div>}
     {recordError && <div className="error-message" role="alert">{t('reportRecordError')}</div>}
-    <section className="records-panel" aria-label={t('inspectionReports')}>
+    <details className="report-help"><summary>{t('reportCaptureHelp')}</summary>
+      <div className="report-help-content">
+        <p>{t('batchArchiveHint')}</p><p>{t('batchSkipHint')}</p><p>{t('captureProgressHint')}</p>
+      </div>
+    </details>
+    <section className="records-panel report-capture-panel" aria-label={t('inspectionReports')}>
       <div className="panel-heading">
-        <label>{t(manual ? 'batchRun' : 'reportDate')} <select value={selected} disabled={!runs.length}
-          onChange={event => { setSelected(event.target.value); setItems(null); setPage(1); setError(null) }}>
-          {runs.map(entry => <option key={runKey(entry)} value={runKey(entry)}>
-            {manual ? `${formatDate(entry.started_at, true)} · ${entry.id?.slice(0, 8)}` : entry.run_date}
-          </option>)}
-        </select></label>
-        {run && <span>{t(statusKeys[run.status] ?? 'runUnknown')} · {t('reportCounts', {
+        <h2>{t('reportCaptureTab')}</h2>
+        {run && <span className="field-hint">{t('reportCounts', {
           total: run.total, completed: run.completed, failed: run.failed, skipped: run.skipped, interrupted: run.interrupted,
         })}</span>}
       </div>
+      {run && <InspectionProgress run={run} manual={manual} onViewReport={setViewReport} />}
       {!loading && !error && !runs.length && <div className="empty-state">{t(manual ? 'batchEmpty' : 'reportEmpty')}</div>}
       {run && <div className="table-container">
         <table><thead><tr><th scope="col">{t('shopCode')}</th><th scope="col">{t('cameraChannel')}</th>
@@ -204,12 +229,13 @@ export function InspectionReports({ onSelect }: { onSelect: (record: Recognition
             onClick={() => { setItems(null); setPage(value => value + 1) }}><Icon name="chevron" size={16} /></button>
         </div></footer>}
     </section>
+    </div>
     {viewReport && <SnapshotBatchReportDialog key={viewReport} id={viewReport} onClose={() => setViewReport(null)} />}
     {confirmBatch && <Dialog title={t('batchCaptureAll')} subtitle={t('batchConfirm')} onClose={() => setConfirmBatch(false)}>
       <div className="dialog-body" id="dialog-description">
         <p>{t('batchArchiveHint')}</p>
         <p>{t('batchSkipHint')}</p>
-        <label><input type="checkbox" checked={recheckSkipped} onChange={event => setRecheckSkipped(event.target.checked)} />
+        <label className="report-option"><input type="checkbox" checked={recheckSkipped} onChange={event => setRecheckSkipped(event.target.checked)} />
           {t('batchRecheckSkipped')}</label>
         <button className="button primary" onClick={() => { void captureAll() }}>{t('batchCaptureAll')}</button>
       </div>
