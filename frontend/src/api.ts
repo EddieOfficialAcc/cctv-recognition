@@ -5,7 +5,7 @@ export type ReviewStatus = 'new' | 'acknowledged' | 'false_positive'
 export type Outcome = 'flagged' | 'needs_review'
 export type Region = 'Hong Kong' | 'Macau'
 
-export type ErrorCode = 'scheduleConflictError' | 'scheduleValidationError' | 'aiConfigurationError' | 'aiStorageError' | 'batchExclusionAmbiguous' | 'batchAlreadyRunning' | 'batchNoRecorders' | 'snapshotConfigurationError' | 'requestError' | 'storageError' | 'analysisError' | 'validationError' | 'notFoundError' |
+export type ErrorCode = 'rulesConflictError' | 'rulesValidationError' | 'rulesStorageError' | 'scheduleConflictError' | 'scheduleValidationError' | 'aiConfigurationError' | 'aiStorageError' | 'batchExclusionAmbiguous' | 'batchAlreadyRunning' | 'batchNoRecorders' | 'snapshotConfigurationError' | 'requestError' | 'storageError' | 'analysisError' | 'validationError' | 'notFoundError' |
   'responseError' | 'fileTypeError' | 'fileSizeError' | 'imageCorruptError' | 'resolutionError' | 'animatedError'
 
 export class ApiError extends Error {
@@ -230,6 +230,11 @@ async function request<T>(
       if (response.status === 409) code = 'scheduleConflictError'
       if (response.status === 422) code = 'scheduleValidationError'
     }
+    if (url === '/api/checking-rules') {
+      if (response.status === 409) code = 'rulesConflictError'
+      if (response.status === 422) code = 'rulesValidationError'
+      if (response.status === 503) code = 'rulesStorageError'
+    }
     if (response.status === 422) {
       if (message.includes('supported')) code = 'fileTypeError'
       else if (message.includes('10 MB')) code = 'fileSizeError'
@@ -246,6 +251,51 @@ async function request<T>(
 
 export function fetchRecords(params: URLSearchParams, signal: AbortSignal) {
   return request(`/api/recognitions?${params}`, isPage, { signal })
+}
+
+export const timestampPositions = ['upper-right', 'upper-left', 'lower-right', 'lower-left'] as const
+export type TimestampPosition = typeof timestampPositions[number]
+export interface RuleValues {
+  signal_instructions: string
+  scene_instructions: string
+  timestamp_position: TimestampPosition
+  timestamp_drift_seconds: number
+}
+export interface CheckingRules extends RuleValues {
+  revision: number
+  updated_at: string | null
+}
+export interface RulesPage {
+  rules: CheckingRules
+  defaults: RuleValues
+}
+
+function isRuleValues(value: unknown): value is RuleValues {
+  return isObject(value) &&
+    ['signal_instructions', 'scene_instructions'].every(key =>
+      typeof value[key] === 'string' && value[key].trim().length > 0 && value[key].length <= 1500) &&
+    timestampPositions.some(position => position === value.timestamp_position) &&
+    typeof value.timestamp_drift_seconds === 'number' && Number.isInteger(value.timestamp_drift_seconds) &&
+    value.timestamp_drift_seconds >= 1 && value.timestamp_drift_seconds <= 86400
+}
+
+function isRulesPage(value: unknown): value is RulesPage {
+  return isObject(value) && isRuleValues(value.defaults) && isObject(value.rules) && isRuleValues(value.rules) &&
+    'revision' in value.rules && typeof value.rules.revision === 'number' &&
+    Number.isInteger(value.rules.revision) && value.rules.revision >= 0 &&
+    'updated_at' in value.rules && (value.rules.updated_at === null ||
+      typeof value.rules.updated_at === 'string' && Number.isFinite(Date.parse(value.rules.updated_at)))
+}
+
+export function fetchCheckingRules(signal: AbortSignal) {
+  return request('/api/checking-rules', isRulesPage, { signal, cache: 'no-store' })
+}
+
+export function saveCheckingRules(values: RuleValues, revision: number) {
+  return request('/api/checking-rules', isRulesPage, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+    body: JSON.stringify({ ...values, revision }),
+  })
 }
 
 export type CameraBrandFilter = '' | 'DAHAU' | 'HIKVISION'

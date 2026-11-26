@@ -5,14 +5,14 @@ from http.client import HTTPException, HTTPSConnection
 import json
 import logging
 import math
-from pathlib import Path
 import re
+from string import Template
 from typing import Literal
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.checking_rules import CheckingRuleDefaults, RuleValues, RulesStorageError, load_checking_rules
 from app.recognition_models import RecognitionCheck
 
 logger = logging.getLogger(__name__)
@@ -42,18 +42,10 @@ def _retry_after(value: str | None) -> float | None:
         return None
 
 
-class VisionSettings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_prefix="VISION_",
-        env_file=Path(__file__).resolve().parents[1] / ".env",
-        extra="ignore",
-        hide_input_in_errors=True,
-    )
-
+class VisionSettings(CheckingRuleDefaults):
     endpoint: str = "https://dify-ai-llm.services.ai.azure.com/openai/v1"
     deployment: str = Field(default="gpt-6.2-sol", min_length=1)
     api_key: SecretStr = Field(min_length=1)
-    drift_seconds: int = Field(default=180, ge=1, le=86400)
 
 
 class LocalizedExplanation(BaseModel):
@@ -98,13 +90,14 @@ Return only a JSON object with exactly these fields:
 {"signal":{"status":"pass|flagged|not_assessed","explanation":{"en":"...","zh_hant":"...","zh_hans":"..."}},
 "scene":{"status":"pass|flagged|not_assessed","explanation":{"en":"...","zh_hant":"...","zh_hans":"..."}},
 "timestamp":{"state":"readable|missing|unreadable|ambiguous","reading":"YYYY-MM-DD HH:MM:SS"}}.
-For signal, look for visible black/blank images, no-signal messages and other visible signal faults.
-If frames are supplied, consider possible repeated frames and flicker but do not claim a live feed is healthy.
-For scene, assess visible obstruction, and compare the camera viewpoint to the approved baseline if provided.
-Without a baseline, do not claim the camera viewpoint is unchanged.
+Signal criteria:
+${signal_instructions}
+Scene criteria:
+${scene_instructions}
 Use flagged for plausible visible issues, not_assessed for insufficient evidence, and pass only when the
 relevant visible evidence is sufficient. Describe uncertainty and do not invent facts.
-Inspect only the timestamp overlay in the upper-right corner of the current screenshot.
+Never claim a live feed is healthy or that the viewpoint is unchanged without an approved baseline.
+Inspect only the timestamp overlay in the ${timestamp_position} corner of the current screenshot.
 If the entire date and time are unambiguously readable, normalize them to YYYY-MM-DD HH:MM:SS,
 without guessing missing digits or ambiguous date order. Otherwise use state missing, unreadable or
 ambiguous as appropriate and a null reading. Do not use timestamps from the baseline or other frames.
@@ -116,7 +109,12 @@ def _image_part(image: bytes) -> dict:
     return {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded}", "detail": "high"}}
 
 
-def _request(settings: VisionSettings, content: list[dict]) -> VisionResponse:
+def _request(settings: VisionSettings, content: list[dict], rules: RuleValues | None = None) -> VisionResponse:
+    rules = rules if rules is not None else RuleValues(timestamp_drift_seconds=settings.drift_seconds)
+    prompt = Template(PROMPT).substitute(
+        signal_instructions=rules.signal_instructions, scene_instructions=rules.scene_instructions,
+        timestamp_position=rules.timestamp_position,
+    )
     try:
         endpoint = urlsplit(settings.endpoint)
         port = endpoint.port
@@ -128,7 +126,7 @@ def _request(settings: VisionSettings, content: list[dict]) -> VisionResponse:
     body = json.dumps({
         "model": settings.deployment,
         "messages": [
-            {"role": "system", "content": PROMPT},
+            {"role": "system", "content": prompt},
             {"role": "user", "content": content},
         ],
         "response_format": {"type": "json_object"},
@@ -221,6 +219,11 @@ def analyze(
     except ValidationError as error:
         logger.error("Vision analysis configuration is invalid (%s).", type(error).__name__)
         raise AnalysisError("Vision analysis is not configured.") from None
+    try:
+        rules = load_checking_rules(settings.drift_seconds)
+    except (RulesStorageError, ValidationError) as error:
+        logger.error("Vision checking rules are unavailable (%s).", type(error).__name__)
+        raise AnalysisError("Checking rules storage unavailable.") from None
     content = [{"type": "text", "text": "Current screenshot:"}, _image_part(image)]
     if baseline is not None:
         content.extend([{"type": "text", "text": "Approved baseline:"}, _image_part(baseline)])
@@ -230,7 +233,7 @@ def analyze(
             "text": f"Additional chronological burst frames; total duration {burst_duration_seconds} seconds:",
         })
         content.extend(_image_part(frame) for frame in frames)
-    result = _request(settings, content)
+    result = _request(settings, content, rules)
     signal = _visual_check("signal", result.signal)
     scene = _visual_check("scene", result.scene)
     if baseline is None and scene.status == "pass":
@@ -238,4 +241,4 @@ def analyze(
             category="scene", status="not_assessed",
             explanation="Scene comparison requires an approved baseline. Camera movement was not assessed.",
         )
-    return [signal, _timestamp_check(result.timestamp, captured_at, settings.drift_seconds), scene]
+    return [signal, _timestamp_check(result.timestamp, captured_at, rules.timestamp_drift_seconds), scene]

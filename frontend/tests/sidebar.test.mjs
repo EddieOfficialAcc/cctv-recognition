@@ -37,6 +37,10 @@ test('sidebar starts open on desktop and closed on small screens', async () => {
       const nav = html.match(/<nav[^>]*>(.*?)<\/nav>/)[1]
       assert.ok(nav.indexOf(`title="${heading}"`) < nav.indexOf(`title="${schedules}"`))
       assert.ok(nav.indexOf(`title="${schedules}"`) < nav.indexOf(`title="${reports}"`))
+      const ruleLabel = { en: 'Checking rules', 'zh-Hant': '檢查規則', 'zh-Hans': '检查规则' }[language]
+      assert.ok(nav.includes(`title="${ruleLabel}"`))
+      assert.ok(nav.indexOf(`title="${schedules}"`) < nav.indexOf(`title="${ruleLabel}"`))
+      assert.ok(nav.indexOf(`title="${ruleLabel}"`) < nav.indexOf(`title="${reports}"`))
       assert.ok(nav.indexOf(`title="${reports}"`) < nav.indexOf(`title="${records}"`))
       assert.match(nav, /aria-current="page" title=/)
       assert.ok(!html.includes(`>${upload}</button>`), 'manual upload is not a home-screen action')

@@ -11,11 +11,12 @@ import { RecordDrawer } from './components/RecordDrawer'
 import { SnapshotWorker } from './components/SnapshotWorker'
 import { UploadDialog } from './components/UploadDialog'
 import { MonitoringOverview } from './components/MonitoringOverview'
+import { CheckingRules } from './components/CheckingRules'
 import { useLocale } from './localization'
 import { isLanguage } from './messages'
 
 const viewLabels = {
-  overview: 'monitoringOverview',
+  overview: 'monitoringOverview', rules: 'checkingRules',
   records: 'recognitionRecords', configuration: 'cameraConfiguration',
   reports: 'inspectionReports', worker: 'snapshotWorker',
 } as const
@@ -140,7 +141,7 @@ export function RecognitionWorkspace({ apiStatus, onLogout }: { apiStatus: strin
       <div className="workspace-label">{t('operationsWorkspace')}</div>
       <nav aria-label={t('mainNavigation')}>
         {([
-          ['overview', 'grid'], ['worker', 'clock'], ['reports', 'file'],
+          ['overview', 'grid'], ['worker', 'clock'], ['rules', 'sliders'], ['reports', 'file'],
           ['records', 'shield'], ['configuration', 'camera'],
         ] as const).map(([item, icon]) => <a key={item} className={`nav-item${view === item ? ' active' : ''}`} href="#main-content"
           aria-current={view === item ? 'page' : undefined} title={t(viewLabels[item])}
@@ -197,6 +198,7 @@ export function RecognitionWorkspace({ apiStatus, onLogout }: { apiStatus: strin
         {storageError && <div className="error-message language-warning" role="alert">{t('languageStorageError')}</div>}
         {view === 'overview' ? <MonitoringOverview onSchedules={() => setView('worker')} onReports={openReports}
           onCameras={() => setView('configuration')} onRecords={() => setView('records')} /> :
+          view === 'rules' ? <CheckingRules /> :
           view === 'configuration' ? <CameraConfiguration /> : view === 'reports' ? <InspectionReports onSelect={setSelected} initialBatch={reportBatch} initialTab={reportTab} /> :
           view === 'worker' ? <SnapshotWorker onOpenReports={batch => openReports(batch, 'capture')} /> : <>
         <div className="page-heading">

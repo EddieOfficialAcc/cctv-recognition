@@ -289,8 +289,8 @@ and execute it against the configured application database. The Python setup
 command reads that same file, so both installation methods use one schema.
 The script creates all four recognition tables only if absent, plus their
 indexes and foreign keys. `NVARCHAR` metadata
-supports both Traditional and Simplified Chinese. No database changes happen
-merely by opening the UI or changing its language.
+supports both Traditional and Simplified Chinese. No SQL Server schema changes
+happen merely by opening the UI or changing its language.
 
 The `vision-llm-v2` analyzer requests signal, timestamp reading and scene
 analysis in a single model call. A matching approved baseline is supplied for
@@ -302,6 +302,33 @@ use and review the live feed; a single screenshot cannot verify freeze or
 flicker. An unflagged record remains **Needs verification**, not certified
 healthy. Model/service errors abort the upload rather than silently saving a
 success-shaped result.
+
+### Checking rules
+
+Open **Checking rules** to view the shared signal criteria, scene criteria,
+timestamp location and allowed clock drift. Choose **Edit rules**, make changes,
+then **Save rules**. Criteria are sent to the vision model as written; do not
+include secrets. **Reset draft to defaults** only changes the editor until saved.
+Concurrent changes are rejected rather than overwriting another operator's
+settings; reload the latest revision before saving again.
+
+Rules apply to scheduled checks, on-demand batch reviews and manual uploads
+when a new model analysis starts. Queued work that has not started uses the
+latest rules. In-flight analyses, cached model results and saved recognition
+records retain their original results. Saving rules does not change capture
+schedules, channel exclusions, the model endpoint or credentials, and does not
+trigger a model call or require a backend restart.
+
+Settings persist in `checking-rules.sqlite3` under the configured snapshot
+archive (`SCHEDULED_INSPECTION_SNAPSHOT_DIR`). The backend automatically creates
+the local SQLite table; no additional SQL Server schema setup is required.
+Keep this file with the persistent archive when deploying or backing up.
+Before the first save, defaults preserve the existing criteria, upper-right
+timestamp location and `VISION_DRIFT_SECONDS` threshold (180 seconds unless
+configured otherwise). Saved rules take precedence over that environment
+threshold. Fixed safeguards remain: uncertain timestamp readings and missing
+capture times never pass, the 60-second threshold uncertainty band is retained,
+and viewpoint comparison cannot pass without an approved baseline.
 
 ### Optional manual burst checks (experimental)
 
@@ -334,14 +361,16 @@ uploads include the approved baseline in the vision request.
 
 ### Timestamp verification
 
-The vision model checks the current screenshot's upper-left timestamp for
+The vision model checks the timestamp location selected in **Checking rules**
+(upper-right by default) in the current screenshot for
 presence and readability and reads its date and time; no separate OCR library
 is used. The backend validates the model's normalized `YYYY-MM-DD HH:MM:SS`
 reading and compares it, assumed to be Hong Kong/Macau time (UTC+8), with the
 supplied actual capture time. It does not substitute upload time. The record
 shows the reading, capture time, signed difference (camera minus capture time),
-configured threshold and reason for the result. The default drift threshold is 180 seconds, configurable
-with `VISION_DRIFT_SECONDS`. Since the form captures time to the minute, results
+configured threshold and reason for the result. The default drift threshold is
+180 seconds, initially configurable with `VISION_DRIFT_SECONDS` and editable in
+**Checking rules**. Since the form captures time to the minute, results
 within 60 seconds of the threshold are **Not assessed**. Missing capture time
 and unsupported or unreadable timestamps are also **Not assessed**. The
 model's reading can be wrong and requires manual verification. A still image

@@ -34,12 +34,12 @@ test('record drawer localizes new timestamp details and preserves old explanatio
       assert.match(current, /2026-11-24 10:25:00/)
       assert.match(current, /-300 秒/)
       assert.match(current, /180 秒/)
-      assert.match(current, /右上角時間戳/)
-      assert.doesNotMatch(current, /左上角/)
+      assert.match(current, /<dt>時間戳<\/dt>/)
+      assert.doesNotMatch(current, /右上角|左上角/)
       const missing = render('vision-llm-v2', JSON.stringify({
         state: 'missing', reading: null, difference_seconds: null, threshold_seconds: 180, reason: 'missing',
       }), { shop_code: '', camera_name: '' })
-      assert.match(missing, /AI 在右上角未找到時間戳/)
+      assert.match(missing, /AI 在檢查範圍內未找到時間戳/)
       assert.match(missing, /未提供/)
       assert.match(missing, /上傳時這兩個欄位均為選填/)
       assert.match(missing, /disabled="">載入目前基準畫面/)

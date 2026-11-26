@@ -8,6 +8,7 @@ const paths = {
   refresh: 'M20 7a9 9 0 00-15-3L2 7 M2 2v5h5 M4 17a9 9 0 0015 3l3-3 M22 22v-5h-5',
   chevron: 'M9 5l7 7-7 7',
   sidebar: 'M3 4h18v16H3z M9 4v16',
+  sliders: 'M4 3v6 M4 15v6 M12 3v10 M12 19v2 M20 3v2 M20 11v10 M1 9h6v6H1z M9 13h6v6H9z M17 5h6v6h-6z',
   close: 'M6 6l12 12 M6 18L18 6',
   info: 'M12 16v-4 M12 8h.01 M22 12a10 10 0 11-20 0 10 10 0 0120 0',
   alert: 'M12 8v5 M12 17h.01 M10 3L1 19a1 1 0 001 2h20a1 1 0 001-2L14 3a2 2 0 00-4 0',

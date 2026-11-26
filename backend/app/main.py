@@ -18,6 +18,7 @@ from app.snapshot_analysis_api import router as snapshot_analysis_router
 from app.recorder import RecorderSettings
 from app.review_schedules import ReviewScheduler
 from app.review_schedule_api import router as review_schedule_router
+from app.checking_rules_api import router as checking_rules_router
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,7 @@ app.include_router(recognition_router)
 app.include_router(snapshot_batches_router)
 app.include_router(snapshot_analysis_router)
 app.include_router(review_schedule_router)
+app.include_router(checking_rules_router)
 
 
 @app.get("/api/health", response_model=HealthResponse, tags=["health"])

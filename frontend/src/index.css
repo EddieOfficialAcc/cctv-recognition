@@ -76,6 +76,23 @@ h1, h2, h3, h4, p { margin: 0; }
 main { max-width: 1600px; padding: 36px; margin: 0 auto; }
 .page-heading { display: flex; justify-content: space-between; align-items: center; gap: 24px; margin-bottom: 28px; }
 .configuration-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.rules-form > fieldset { display: grid; gap: 20px; border: 0; padding: 0; margin: 0; min-width: 0; }
+.rules-form fieldset > .rules-card { margin: 0; }
+.rules-version { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; font-size: 11px; color: #65758a; margin-bottom: 16px; }
+.rules-version strong { color: #97650d; font-weight: 600; }
+.rules-card-body { display: grid; gap: 16px; padding: 0 24px 24px; }
+.rules-card-body > p { font-size: 12px; line-height: 1.8; color: #65758a; }
+.rules-card-body label { color: #405169; font-size: 12px; font-weight: 600; line-height: 1.8; }
+.rules-card-body textarea, .rules-card-body input, .rules-card-body select { margin-top: 7px; }
+.rules-card-body textarea { resize: vertical; min-height: 120px; line-height: 1.9; }
+.rule-criteria { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.9; color: #344b61; background: #f7fafb; border: 1px solid #e3eaee; border-radius: 8px; padding: 16px; }
+.rules-timestamp-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; margin: 0; }
+.rules-timestamp-fields dt { font-size: 11px; color: #65758a; }
+.rules-timestamp-fields dd { margin: 8px 0 0; color: #344b61; font-size: 16px; font-weight: 600; }
+.rules-save-bar { display: grid; gap: 16px; padding: 22px; border: 1px solid #d5e5e0; border-radius: 10px; background: #eff8f5; }
+.rules-save-bar > p { font-size: 12px; line-height: 1.9; color: #56716f; }
+.rules-save-bar .configuration-actions { justify-content: flex-end; }
+.rules-notice { margin-bottom: 20px; }
 .monitoring-overview { display: grid; gap: 22px; }
 .monitoring-overview > .page-heading { margin-bottom: 4px; }
 .monitoring-hero { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 38px; padding: 34px; border: 1px solid #264a53; border-radius: 16px; background: radial-gradient(ellipse at top left, #214f57, transparent 70%), #102b39; color: #e2edf0; }
@@ -347,6 +364,10 @@ textarea { resize: vertical; min-height: 85px; }
   h1 { font-size: 25px; } .page-description { max-width: 340px; font-size: 12px; }
 }
 @media (max-width: 640px) {
+  .rules-card-body { padding: 0 15px 20px; }
+  .rules-timestamp-fields { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .rules-save-bar { padding: 16px; }
+  .rules-save-bar .button { white-space: normal; }
   .sidebar { width: 244px; z-index: 10; box-shadow: 12px 0 40px #10203640; }
   .workspace { margin-left: 0; }
   .monitoring-overview { gap: 17px; }
