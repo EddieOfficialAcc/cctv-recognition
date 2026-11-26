@@ -21,6 +21,7 @@ export function SnapshotBatchReportDetails({ report }: { report: SnapshotBatchRe
     <p>{t('batchReportStarted', { time: formatDate(report.started_at, true) })}</p>
     <p>{t('batchReportFinished', { time: formatDate(report.finished_at, true) })}</p>
     {report.error && <p className="error-message" role="alert">{t('batchFailureDetail', { reason: report.error })}</p>}
+    {report.analysis_error && <p className="error-message" role="alert">{t('aiEnqueueError', { reason: report.analysis_error })}</p>}
     <div className="filter-bar"><label>{t('result')} <select value={status} onChange={event => {
       setStatus(event.target.value); setPage(1)
     }}>

@@ -62,6 +62,7 @@ export function SnapshotWorker({ onOpenReports }: { onOpenReports: () => void })
       <div className="panel-heading"><h2 id="worker-setup">{t('workerSetup')}</h2></div>
       <div className="worker-panel-body">
         <p className="muted">{t('workerSetupHint')}</p>
+        <p className="field-hint">{t('aiScheduledHint')}</p>
         <label>{t('workerMode')}<select value={mode} onChange={event => {
           setMode(event.target.value === 'analyze' ? 'analyze' : 'capture')
         }}>

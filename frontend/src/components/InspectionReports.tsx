@@ -5,6 +5,7 @@ import { Icon } from './Icon'
 import { Dialog } from './Dialog'
 import { EvidenceImage } from './EvidenceImage'
 import { SnapshotBatchReportDialog } from './SnapshotBatchReportDialog'
+import { SnapshotAnalysis } from './SnapshotAnalysis'
 
 const runKey = (run: InspectionRun) => run.id ?? run.run_date
 
@@ -146,6 +147,7 @@ export function InspectionReports({ onSelect }: { onSelect: (record: Recognition
     {exclusionError && <div className="error-message" role="alert">{errorMessage(exclusionError)}</div>}
     {exclusionSaved && <p role="status">{t('batchExclusionSaved')}</p>}
     {run && <InspectionProgress run={run} manual={manual} onViewReport={setViewReport} />}
+    <SnapshotAnalysis key={`${manual}:${selected}`} run={run} manual={manual} onSelect={onSelect} />
     {error && <div className="error-message" role="alert">{errorMessage(error)}</div>}
     {recordError && <div className="error-message" role="alert">{t('reportRecordError')}</div>}
     <section className="records-panel" aria-label={t('inspectionReports')}>

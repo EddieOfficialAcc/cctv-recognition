@@ -4,6 +4,76 @@ import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createServer } from 'vite'
 
+test('AI review progress, localization, queue API contracts and strict response validation', async () => {
+  const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: 'custom' })
+  const oldStorage = globalThis.localStorage
+  const oldFetch = globalThis.fetch
+  try {
+    const api = await server.ssrLoadModule('/src/api.ts')
+    const { AnalysisProgress, SnapshotAnalysis } = await server.ssrLoadModule('/src/components/SnapshotAnalysis.tsx')
+    const { LocaleContext, useLanguageState } = await server.ssrLoadModule('/src/localization.ts')
+    const summary = { total: 20, queued: 10, analyzing: 2, completed: 6, failed: 2, flagged: 3,
+      worker_online: false, auto_analyze: false }
+    for (const [language, heading, auto] of [
+      ['en', 'Snapshot AI review', 'Automatically analyze all snapshots in future manual batches'],
+      ['zh-Hant', '快照 AI 審查', '自動分析日後手動批次的所有快照'],
+      ['zh-Hans', '快照 AI 审查', '自动分析以后手动批次的所有快照'],
+    ]) {
+      globalThis.localStorage = { getItem: () => language }
+      function Provider({ children }) {
+        return React.createElement(LocaleContext.Provider, { value: useLanguageState() }, children)
+      }
+      const progress = renderToStaticMarkup(React.createElement(Provider, null,
+        React.createElement(AnalysisProgress, { summary, saved: 1402 })))
+      assert.match(progress, /<progress max="20" value="8"/)
+      assert.match(progress, /1402/)
+      assert.match(progress, /role="alert"/)
+      const controls = renderToStaticMarkup(React.createElement(Provider, null,
+        React.createElement(SnapshotAnalysis, { manual: true, onSelect() {} })))
+      assert.ok(controls.includes(heading))
+      assert.ok(controls.includes(auto))
+      assert.match(controls, /SNAPSHOT_ANALYSIS_CONCURRENCY/)
+    }
+    const settings = { auto_analyze: false, configured: true, worker_enabled: true, worker_online: true, concurrency: 2 }
+    const body = { summary, total: 20, page: 1, page_size: 20, items: [
+      { id: 'item', shop_code: '001', region: 'Hong Kong', channel: 1, status: 'queued',
+        attempts: 0, message: '', retry_at: null, record: null },
+    ] }
+    const calls = []
+    globalThis.fetch = async (url, options) => {
+      calls.push({ url, options })
+      return Response.json(url.includes('/settings') ? settings : body)
+    }
+    const signal = new AbortController().signal
+    await api.startBatchAnalysis('batch', 20)
+    await api.startBatchAnalysis('batch', null)
+    await api.retryAnalysis('batch', true)
+    await api.setAutoAnalysis(true)
+    await api.fetchAnalysis('2026-11-26', false, 2, 'failed', signal)
+    assert.equal(calls[0].url, '/api/snapshot-batches/batch/analysis')
+    assert.deepEqual(JSON.parse(calls[0].options.body), { limit: 20 })
+    assert.deepEqual(JSON.parse(calls[1].options.body), { limit: null })
+    assert.equal(calls[2].url, '/api/snapshot-analysis/batch/batch/retry')
+    assert.deepEqual(JSON.parse(calls[3].options.body), { auto_analyze: true })
+    assert.equal(calls[3].options.method, 'PATCH')
+    for (const call of calls.slice(0, 4)) assert.equal(call.options.headers['X-Requested-With'], 'XMLHttpRequest')
+    assert.equal(calls[4].url, '/api/snapshot-analysis/scheduled/2026-11-26?page=2&page_size=20&status=failed')
+    assert.equal(calls[4].options.signal, signal)
+    assert.equal(calls[4].options.cache, 'no-store')
+    globalThis.fetch = async () => Response.json({ ...body, items: [{ ...body.items[0], status: 'completed' }] })
+    await assert.rejects(api.startBatchAnalysis('batch', 20), { code: 'responseError' })
+    globalThis.fetch = async () => Response.json({ detail: 'Vision analysis is not configured.' }, { status: 503 })
+    await assert.rejects(api.startBatchAnalysis('batch', 20), { code: 'aiConfigurationError' })
+    globalThis.fetch = async () => Response.json({ detail: 'AI review storage or configuration unavailable.' }, { status: 503 })
+    await assert.rejects(api.retryAnalysis('batch', true), { code: 'aiStorageError' })
+  } finally {
+    globalThis.fetch = oldFetch
+    if (oldStorage === undefined) delete globalThis.localStorage
+    else globalThis.localStorage = oldStorage
+    await server.close()
+  }
+})
+
 test('inspection reports exposes bulk capture and run selection in all locales', async () => {
   const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: 'custom' })
   const oldStorage = globalThis.localStorage
@@ -68,6 +138,7 @@ test('inspection reports exposes bulk capture and run selection in all locales',
         id: 'new-batch', run_date: '2026-11-26', status: 'running', started_at: null, finished_at: null,
         total: 3, completed: 0, failed: 0, skipped: 0, interrupted: 0, saved: 0,
       })
+
     }
     await api.startSnapshotBatch(true)
     await api.setSnapshotChannelExcluded('previous-batch', 'channel-item', true)

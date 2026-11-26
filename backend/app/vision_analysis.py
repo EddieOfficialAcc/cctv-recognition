@@ -1,8 +1,10 @@
 import base64
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from http.client import HTTPException, HTTPSConnection
 import json
 import logging
+import math
 from pathlib import Path
 import re
 from typing import Literal
@@ -19,6 +21,25 @@ HONG_KONG = timezone(timedelta(hours=8))
 
 class AnalysisError(RuntimeError):
     pass
+
+
+class RetryableAnalysisError(AnalysisError):
+    def __init__(self, message: str, retry_after: float | None = None, rate_limited: bool = False):
+        super().__init__(message)
+        self.retry_after = retry_after
+        self.rate_limited = rate_limited
+
+
+def _retry_after(value: str | None) -> float | None:
+    if not value:
+        return None
+    try:
+        seconds = float(value) if value.isdecimal() else (
+            parsedate_to_datetime(value) - datetime.now(timezone.utc)
+        ).total_seconds()
+        return max(0, seconds) if math.isfinite(seconds) else None
+    except (ValueError, TypeError, OverflowError):
+        return None
 
 
 class VisionSettings(BaseSettings):
@@ -124,6 +145,11 @@ def _request(settings: VisionSettings, content: list[dict]) -> VisionResponse:
         response = connection.getresponse()
         if response.status != 200:
             logger.error("Vision API returned HTTP %s.", response.status)
+            if response.status in (408, 429, 500, 502, 503, 504):
+                raise RetryableAnalysisError(
+                    f"Vision service temporarily unavailable (HTTP {response.status}).",
+                    _retry_after(response.getheader("Retry-After")), response.status == 429,
+                )
             raise AnalysisError("Vision analysis service rejected the request.")
         raw = response.read(1_048_577)
         if len(raw) > 1_048_576:
@@ -131,7 +157,10 @@ def _request(settings: VisionSettings, content: list[dict]) -> VisionResponse:
         payload = json.loads(raw)
         result = VisionResponse.model_validate_json(payload["choices"][0]["message"]["content"])
         return result
-    except (OSError, HTTPException, ValueError, KeyError, IndexError, TypeError, ValidationError) as error:
+    except (OSError, HTTPException) as error:
+        logger.error("Vision transport failed (%s).", type(error).__name__)
+        raise RetryableAnalysisError("Vision analysis service is temporarily unreachable.") from None
+    except (ValueError, KeyError, IndexError, TypeError, ValidationError) as error:
         logger.error("Vision analysis request or response failed (%s).", type(error).__name__)
         raise AnalysisError("Vision analysis service is unavailable or returned an invalid response.") from None
     finally:

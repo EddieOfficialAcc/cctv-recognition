@@ -1,6 +1,6 @@
 from contextlib import closing
 from datetime import datetime, timezone
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pyodbc
 
@@ -14,6 +14,28 @@ COLUMNS = (
     "width, height, outcome, review_status, review_note, reviewed_at, analyzer_version"
 )
 FIELD_NAMES = [column.strip() for column in COLUMNS.split(",")]
+
+
+def recorder_identifier(fingerprint: bytes) -> str:
+    with closing(connect(DatabaseSettings())) as connection:
+        connection.autocommit = False
+        try:
+            with closing(connection.cursor()) as cursor:
+                row = cursor.execute(
+                    "SELECT id FROM dbo.inspection_recorder_identities WITH (UPDLOCK, HOLDLOCK) "
+                    "WHERE fingerprint=?", pyodbc.Binary(fingerprint),
+                ).fetchone()
+                identifier = str(row[0]) if row else str(uuid4())
+                if row is None:
+                    cursor.execute(
+                        "INSERT INTO dbo.inspection_recorder_identities (fingerprint, id) VALUES (?, ?)",
+                        pyodbc.Binary(fingerprint), identifier,
+                    )
+            connection.commit()
+            return identifier
+        except pyodbc.Error:
+            connection.rollback()
+            raise
 
 
 def _records(cursor: pyodbc.Cursor, rows: list[pyodbc.Row]) -> list[RecognitionRecord]:

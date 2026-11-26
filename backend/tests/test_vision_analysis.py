@@ -10,7 +10,7 @@ from PIL import Image
 
 from app.main import app
 from app.auth import require_user
-from app.vision_analysis import AnalysisError, TimestampEvidence, VisionSettings, _request, _timestamp_check, analyze
+from app.vision_analysis import AnalysisError, RetryableAnalysisError, TimestampEvidence, VisionSettings, _request, _retry_after, _timestamp_check, analyze
 
 
 def model_result():
@@ -29,6 +29,24 @@ def model_result():
     "VISION_DRIFT_SECONDS": "180",
 })
 class VisionAnalysisTest(unittest.TestCase):
+    def test_transient_statuses_preserve_safe_retry_after_without_provider_body(self):
+        for status in (429, 503):
+            with self.subTest(status=status), patch("app.vision_analysis.HTTPSConnection") as factory:
+                response = factory.return_value.getresponse.return_value
+                response.status = status
+                response.getheader.return_value = "120"
+                with self.assertRaises(RetryableAnalysisError) as raised:
+                    _request(VisionSettings(), [])
+                self.assertEqual(raised.exception.retry_after, 120)
+                self.assertEqual(raised.exception.rate_limited, status == 429)
+                response.read.assert_not_called()
+                factory.return_value.close.assert_called_once()
+        self.assertIsNone(_retry_after("invalid"))
+        self.assertEqual(_retry_after("7200"), 7200)
+        with patch("app.vision_analysis.datetime") as clock:
+            clock.now.return_value = datetime(2026, 11, 24, 2, 30, tzinfo=timezone.utc)
+            self.assertEqual(_retry_after("Tue, 24 Nov 2026 02:32:00 GMT"), 120)
+
     def test_one_request_includes_ordered_images_and_three_checks(self):
         body = {"choices": [{"message": {"content": json.dumps(model_result())}}]}
         with patch("app.vision_analysis.HTTPSConnection") as factory:

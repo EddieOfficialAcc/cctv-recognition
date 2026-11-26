@@ -1,4 +1,4 @@
-"""On-demand, capture-only batches, independent of the daily SQL inspection runs.
+"""On-demand capture batches, independent of the daily SQL inspection runs.
 
 Reports live at <snapshot_dir>/batches/<batch UUID>/report.json; JPEGs are below
 that folder, grouped by Hong Kong date and recorder index. A SQL session lock
@@ -29,6 +29,8 @@ from app.recorder import (
 )
 from app.scheduled_inspection import HONG_KONG, _eligible_recorders, _utc_now
 from app.snapshot_storage import SnapshotStorageError, save_snapshot
+from app.snapshot_analysis import AnalysisPage, AnalysisQueue, QueueError
+from app.snapshot_analysis_api import require_vision
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +38,7 @@ logger = logging.getLogger(__name__)
 class BatchRun(Run):
     id: UUID
     error: str = ""
+    analysis_error: str = ""
 
 
 class BatchReport(BaseModel):
@@ -47,6 +50,8 @@ class BatchReport(BaseModel):
     items: list[Item]
     recorder_keys: dict[int, str] = Field(default_factory=dict)
     recheck_skipped: bool = False
+    auto_analyze: bool = False
+    analysis_error: str = ""
 
     def summary(self) -> BatchRun:
         counts = {status: sum(item.status == status for item in self.items)
@@ -54,7 +59,8 @@ class BatchReport(BaseModel):
         return BatchRun(
             id=self.id, run_date=self.started_at.astimezone(HONG_KONG).date(),
             status=self.status, started_at=self.started_at, finished_at=self.finished_at,
-            total=len(self.items), saved=sum(item.has_evidence for item in self.items), error=self.error, **counts,
+            total=len(self.items), saved=sum(item.has_evidence for item in self.items),
+            error=self.error, analysis_error=self.analysis_error, **counts,
         )
 
 
@@ -154,6 +160,9 @@ def _refresh_reports(root: Path) -> None:
 def _storage_errors():
     try:
         yield
+    except QueueError as error:
+        logger.error("Snapshot AI queue operation failed: %s", error)
+        raise HTTPException(503, "AI review storage or configuration unavailable.") from None
     except (OSError, ValueError, pyodbc.Error, SnapshotStorageError) as error:
         logger.error("Snapshot batch storage operation failed (%s).", type(error).__name__)
         raise HTTPException(503, "Snapshot batch storage unavailable.") from None
@@ -259,6 +268,13 @@ def _capture_batch(root: Path, report: BatchReport, recorders: dict[int, Recorde
                     item.status = "failed"
                     item.message = str(error)[:1000]
             _write_report(root, report)
+            if report.auto_analyze and item.has_evidence:
+                try:
+                    _enqueue_item(root, report, item)
+                except QueueError as error:
+                    report.analysis_error = str(error)
+                    logger.error("Snapshot saved but AI enqueue failed for %s: %s", item.id, error)
+                    _write_report(root, report)
         for index, key in report.recorder_keys.items():
             exclusions.record_results(
                 key, present.get(index, set()), not_found.get(index, set()), recheck=report.recheck_skipped,
@@ -293,12 +309,14 @@ def start_batch(background: BackgroundTasks, recheck_skipped: bool = False) -> B
     password = settings.dahau_password.get_secret_value()
     if not password.strip():
         raise HTTPException(503, "Manual snapshot capture is not configured.")
+    auto_analyze = AnalysisQueue(settings.snapshot_dir).auto_analyze()
     connection = _acquire_lock()
     if connection is None:
         raise HTTPException(409, "A manual snapshot batch is already running.")
     try:
         _recover_interrupted(settings.snapshot_dir)
         report, recorders = _plan_batch(password, settings.snapshot_dir, recheck_skipped)
+        report.auto_analyze = auto_analyze
         if not report.items:
             raise HTTPException(422, "No DAHAU recorders are configured for batch capture.")
         _write_report(settings.snapshot_dir, report)
@@ -307,6 +325,34 @@ def start_batch(background: BackgroundTasks, recheck_skipped: bool = False) -> B
     except Exception:
         _release_lock(connection)
         raise
+
+
+def _enqueue_item(root: Path, report: BatchReport, item: Item) -> None:
+    AnalysisQueue(root).enqueue(
+        f"batch:{report.id}", item.id, _evidence_path(root, report, item), item.shop_code, item.region,
+        item.channel, item.captured_at, recorder_key=report.recorder_keys.get(item.recorder_index),
+    )
+
+
+class AnalysisSelection(BaseModel):
+    limit: Literal[20] | None = 20
+
+
+@router.post("/{batch_id}/analysis", response_model=AnalysisPage, status_code=202)
+def analyze_batch(batch_id: UUID, selection: AnalysisSelection) -> AnalysisPage:
+    require_vision()
+    root = RecorderSettings().snapshot_dir
+    report = _read_report(root, batch_id)
+    if report.status == "running":
+        raise HTTPException(409, "Wait for capture to finish before starting a batch review.")
+    items = [item for item in report.items if item.has_evidence]
+    if selection.limit:
+        items = items[:selection.limit]
+    if not items:
+        raise HTTPException(422, "This batch has no saved snapshots to analyze.")
+    for item in items:
+        _enqueue_item(root, report, item)
+    return AnalysisQueue(root).page(f"batch:{batch_id}")
 
 
 @router.get("", response_model=list[BatchRun])

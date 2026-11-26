@@ -14,15 +14,14 @@ from pydantic import ValidationError
 
 from app.database import DatabaseSettings, connect
 from app.channel_exclusions import ChannelExclusions, exclusion_message, recorder_key
-from app.inspection import InvalidScreenshot, analyze_screenshot, prepare_screenshot
-from app.recognition_models import RecognitionRecord
+from app.inspection import InvalidScreenshot, prepare_screenshot
 from app import recognition_repository
 from app.recorder import (
     MAX_CHANNELS, Recorder, RecorderAuthenticationError, RecorderChannelNotFoundError,
     RecorderError, RecorderSettings,
 )
 from app.snapshot_storage import DEFAULT_SNAPSHOT_DIR, SnapshotStorageError, save_snapshot
-from app.vision_analysis import AnalysisError, VisionSettings
+from app.snapshot_analysis import AnalysisQueue, QueueError
 
 logger = logging.getLogger(__name__)
 HONG_KONG = timezone(timedelta(hours=8))
@@ -70,19 +69,7 @@ def _add_item(run_date: date, recorder_index: int, shop: str, region: str, chann
 
 
 def _recorder_identifier(shop: str, region: str, address: str) -> str:
-    fingerprint = bytes.fromhex(recorder_key(shop, region, address))
-    with closing(connect(DatabaseSettings())) as connection, closing(connection.cursor()) as cursor:
-        row = cursor.execute(
-            "SELECT id FROM dbo.inspection_recorder_identities WHERE fingerprint=?", pyodbc.Binary(fingerprint),
-        ).fetchone()
-        if row is not None:
-            return str(row[0])
-        identifier = uuid4()
-        cursor.execute(
-            "INSERT INTO dbo.inspection_recorder_identities (fingerprint, id) VALUES (?, ?)",
-            pyodbc.Binary(fingerprint), str(identifier),
-        )
-        return str(identifier)
+    return recognition_repository.recorder_identifier(bytes.fromhex(recorder_key(shop, region, address)))
 
 
 def _process_recorder(run_date: date, recorder_index: int, row,
@@ -166,23 +153,20 @@ def _capture_channels(recorder: Recorder, recorder_id: str, shop: str, region: s
             save_snapshot(snapshot_dir, run_date, recorder_id, channel, evidence)
             _execute(
                 "UPDATE dbo.inspection_run_items SET status=?, captured_at=?, evidence=? WHERE id=?",
-                "captured" if analyze else "completed", _db_time(captured_at), pyodbc.Binary(evidence), str(item_id),
+                "completed", _db_time(captured_at), pyodbc.Binary(evidence), str(item_id),
             )
-            if not analyze:
-                continue
-            baseline = recognition_repository.get_baseline_evidence(region, shop, name)
-            analysis = analyze_screenshot(evidence, captured_at, baseline)
-            record = RecognitionRecord(
-                id=item_id, shop_code=shop, camera_name=name, region=region,
-                filename=f"channel-{channel}.jpeg", uploaded_at=_utc_now(), captured_at=captured_at,
-                width=analysis.width, height=analysis.height,
-                outcome="flagged" if any(check.status == "flagged" for check in analysis.checks) else "needs_review",
-                review_status="new", review_note="", reviewed_at=None,
-                analyzer_version=analysis.analyzer_version, checks=analysis.checks,
-            )
-            recognition_repository.save_record(record, analysis.evidence)
-            _execute("UPDATE dbo.inspection_run_items SET status='completed' WHERE id=?", str(item_id))
-        except (RecorderError, InvalidScreenshot, AnalysisError, SnapshotStorageError) as error:
+            if analyze:
+                try:
+                    AnalysisQueue(snapshot_dir).enqueue(
+                        f"scheduled:{run_date}", item_id,
+                        snapshot_dir / run_date.isoformat() / recorder_id / f"channel-{channel:03d}.jpeg",
+                        shop, region, channel, captured_at, camera_name=name,
+                    )
+                except QueueError as error:
+                    logger.error("Scheduled snapshot saved but AI enqueue failed for %s: %s", item_id, error)
+                    _execute("UPDATE dbo.inspection_run_items SET message=? WHERE id=?",
+                             f"Snapshot saved, but AI could not be queued: {error}"[:1000], str(item_id))
+        except (RecorderError, InvalidScreenshot, SnapshotStorageError) as error:
             authentication_failed = isinstance(error, RecorderAuthenticationError)
             if isinstance(error, RecorderChannelNotFoundError):
                 not_found.add(channel)
@@ -269,8 +253,6 @@ def main() -> None:
     public_holidays = country_holidays("HK", observed=True)
     snapshot_dir = recorder_settings.snapshot_dir
     analyze = os.environ.get("SCHEDULED_INSPECTION_ANALYZE", "").lower() == "true"
-    if analyze:
-        VisionSettings()
     with closing(connect(DatabaseSettings())) as lock_connection, closing(lock_connection.cursor()) as cursor:
         lock = cursor.execute(
             "SET NOCOUNT ON; DECLARE @result int; EXEC @result = sp_getapplock "

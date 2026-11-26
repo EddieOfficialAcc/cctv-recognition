@@ -106,8 +106,8 @@ class ScheduledInspectionTest(unittest.TestCase):
         ) as recorder_type, patch(
             "app.scheduled_inspection._recorder_identifier", return_value=recorder_id,
         ), patch("app.scheduled_inspection._execute") as execute, patch(
-            "app.scheduled_inspection.analyze_screenshot",
-        ) as vision:
+            "app.scheduled_inspection.AnalysisQueue",
+        ) as queue:
             recorder = recorder_type.return_value
             recorder.base = "http://192.0.2.1:81"
             recorder.snapshot.side_effect = [b"<html>not a camera image</html>", image.getvalue()]
@@ -127,7 +127,7 @@ class ScheduledInspectionTest(unittest.TestCase):
                 self.assertEqual(item.args[-2], "configured_count")
             self.assertIn("status='failed'", execute.call_args_list[-2].args[0])
             self.assertEqual(execute.call_args.args[1], "completed")
-            vision.assert_not_called()
+            queue.assert_not_called()
 
     def test_snapshot_authentication_failure_marks_remaining_channels_failed_without_retry(self) -> None:
         run_date = date(2026, 11, 26)

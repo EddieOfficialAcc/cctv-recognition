@@ -5,7 +5,7 @@ export type ReviewStatus = 'new' | 'acknowledged' | 'false_positive'
 export type Outcome = 'flagged' | 'needs_review'
 export type Region = 'Hong Kong' | 'Macau'
 
-export type ErrorCode = 'batchExclusionAmbiguous' | 'batchAlreadyRunning' | 'batchNoRecorders' | 'snapshotConfigurationError' | 'requestError' | 'storageError' | 'analysisError' | 'validationError' | 'notFoundError' |
+export type ErrorCode = 'aiConfigurationError' | 'aiStorageError' | 'batchExclusionAmbiguous' | 'batchAlreadyRunning' | 'batchNoRecorders' | 'snapshotConfigurationError' | 'requestError' | 'storageError' | 'analysisError' | 'validationError' | 'notFoundError' |
   'responseError' | 'fileTypeError' | 'fileSizeError' | 'imageCorruptError' | 'resolutionError' | 'animatedError'
 
 export class ApiError extends Error {
@@ -77,6 +77,7 @@ export interface CameraConfigurationPage {
 export interface InspectionRun {
   id?: string
   error?: string
+  analysis_error?: string
   run_date: string
   status: string
   started_at: string | null
@@ -118,6 +119,7 @@ export interface SnapshotBatchReport {
   started_at: string
   finished_at: string | null
   error?: string
+  analysis_error?: string
   items: InspectionItem[]
 }
 
@@ -217,6 +219,8 @@ async function request<T>(
       response.status === 413 ? 'fileSizeError' :
       response.status === 422 ? 'validationError' : 'requestError'
     if (message === 'Manual snapshot capture is not configured.') code = 'snapshotConfigurationError'
+    if (message === 'Vision analysis is not configured.') code = 'aiConfigurationError'
+    if (message === 'AI review storage or configuration unavailable.') code = 'aiStorageError'
     if (message === 'A manual snapshot batch is already running.') code = 'batchAlreadyRunning'
     if (message === 'No DAHAU recorders are configured for batch capture.') code = 'batchNoRecorders'
     if (message === 'A unique current recorder configuration is required to exclude this channel.') code = 'batchExclusionAmbiguous'
@@ -284,6 +288,104 @@ export async function captureCameraSnapshot(shop_code: string, region: string, c
 
 export function startSnapshotBatch(recheckSkipped = false) {
   return request(`/api/snapshot-batches?recheck_skipped=${recheckSkipped}`, isSnapshotBatch, {
+    method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' },
+  })
+}
+
+export type AnalysisStatus = 'queued' | 'analyzing' | 'completed' | 'failed'
+export const analysisStatusKeys = {
+  queued: 'aiQueued', analyzing: 'aiAnalyzing', completed: 'runCompleted', failed: 'runFailed',
+} as const satisfies Record<AnalysisStatus, MessageKey>
+
+export interface AnalysisSettings {
+  configured: boolean
+  auto_analyze: boolean
+  worker_online: boolean
+  worker_enabled: boolean
+  concurrency: number
+}
+
+export interface AnalysisSummary {
+  total: number
+  queued: number
+  analyzing: number
+  completed: number
+  failed: number
+  flagged: number
+  worker_online: boolean
+  auto_analyze: boolean
+}
+
+export interface AnalysisItem {
+  id: string
+  shop_code: string
+  region: Region
+  channel: number
+  status: AnalysisStatus
+  attempts: number
+  message: string
+  retry_at: string | null
+  record: RecognitionRecord | null
+}
+
+export interface AnalysisPage {
+  items: AnalysisItem[]
+  summary: AnalysisSummary
+  total: number
+  page: number
+  page_size: number
+}
+
+function isAnalysisSettings(value: unknown): value is AnalysisSettings {
+  return isObject(value) && ['configured', 'auto_analyze', 'worker_online', 'worker_enabled']
+    .every(key => typeof value[key] === 'boolean') && typeof value.concurrency === 'number'
+}
+
+function isAnalysisPage(value: unknown): value is AnalysisPage {
+  return isObject(value) && ['total', 'page', 'page_size'].every(key => typeof value[key] === 'number') &&
+    isObject(value.summary) && ['total', 'queued', 'analyzing', 'completed', 'failed', 'flagged']
+      .every(key => isObject(value.summary) && typeof value.summary[key] === 'number') &&
+    typeof value.summary.worker_online === 'boolean' && typeof value.summary.auto_analyze === 'boolean' &&
+    Array.isArray(value.items) && value.items.every(item => isObject(item) &&
+      ['id', 'shop_code', 'message'].every(key => typeof item[key] === 'string') &&
+      (item.region === 'Hong Kong' || item.region === 'Macau') &&
+      typeof item.channel === 'number' && typeof item.attempts === 'number' &&
+      ['queued', 'analyzing', 'completed', 'failed'].includes(String(item.status)) &&
+      (item.retry_at === null || typeof item.retry_at === 'string') &&
+      (item.record === null || isRecord(item.record)) &&
+      (item.status !== 'completed' || isRecord(item.record)))
+}
+
+export const analysisSource = (id: string, manual: boolean) =>
+  `/api/snapshot-analysis/${manual ? 'batch' : 'scheduled'}/${encodeURIComponent(id)}`
+
+export function fetchAnalysisSettings(signal: AbortSignal) {
+  return request('/api/snapshot-analysis/settings', isAnalysisSettings, { signal, cache: 'no-store' })
+}
+
+export function setAutoAnalysis(auto_analyze: boolean) {
+  return request('/api/snapshot-analysis/settings', isAnalysisSettings, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+    body: JSON.stringify({ auto_analyze }),
+  })
+}
+
+export function fetchAnalysis(id: string, manual: boolean, page: number, status: AnalysisStatus | '',
+  signal: AbortSignal) {
+  const params = new URLSearchParams({ page: String(page), page_size: '20' })
+  if (status) params.set('status', status)
+  return request(`${analysisSource(id, manual)}?${params}`, isAnalysisPage, { signal, cache: 'no-store' })
+}
+
+export function startBatchAnalysis(id: string, limit: 20 | null) {
+  return request(`/api/snapshot-batches/${encodeURIComponent(id)}/analysis`, isAnalysisPage, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+    body: JSON.stringify({ limit }),
+  })
+}
+
+export function retryAnalysis(id: string, manual: boolean) {
+  return request(`${analysisSource(id, manual)}/retry`, isAnalysisPage, {
     method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' },
   })
 }
