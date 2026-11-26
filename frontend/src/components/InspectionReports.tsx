@@ -3,6 +3,8 @@ import { fetchInspectionItems, fetchInspectionRuns, fetchRecord, type Inspection
 import { useLocale } from '../localization'
 import type { MessageKey } from '../messages'
 import { Icon } from './Icon'
+import { Dialog } from './Dialog'
+import { EvidenceImage } from './EvidenceImage'
 
 const statusKeys: Record<string, MessageKey> = {
   running: 'runRunning', completed: 'runCompleted', interrupted: 'runInterrupted', missed: 'runMissed',
@@ -19,6 +21,7 @@ export function InspectionReports({ onSelect }: { onSelect: (record: Recognition
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<Error | null>(null)
   const [recordError, setRecordError] = useState(false)
+  const [preview, setPreview] = useState<{ url: string; name: string; filename: string } | null>(null)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -81,8 +84,14 @@ export function InspectionReports({ onSelect }: { onSelect: (record: Recognition
             <td>{item.shop_code}</td><td>{item.channel ? `${item.channel}: ${item.camera_name}` : '—'}</td>
             <td>{t(statusKeys[item.status] ?? 'runUnknown')}</td><td>{formatDate(item.captured_at, true)}</td>
             <td>{item.coverage_method === 'recorder_titles' ? t('coverageTitles') :
-              item.coverage_method === 'count_fallback' ? t('coverageFallback') : t('coverageNone')}
+              item.coverage_method === 'count_fallback' ? t('coverageFallback') :
+              item.coverage_method === 'configured_count' ? t('coverageConfiguredCount') : t('coverageNone')}
               {item.message && <span className="cell-subtitle">{item.message}</span>}</td><td>
+              {item.has_evidence && <button className="text-button" onClick={() => setPreview({
+                url: `/api/inspection-runs/items/${item.id}/evidence`,
+                name: `${item.shop_code} · ${item.camera_name}`,
+                filename: `snapshot-${item.id}.jpg`,
+              })}>{t('snapshotPreview')}</button>}
               {item.has_evidence && <a className="text-button" href={`/api/inspection-runs/items/${item.id}/evidence`}
                 download={`snapshot-${item.id}.jpg`}>{t('reportEvidence')}</a>}
               {item.has_record && <button className="text-button" onClick={() => {
@@ -105,5 +114,11 @@ export function InspectionReports({ onSelect }: { onSelect: (record: Recognition
             onClick={() => { setItems(null); setPage(value => value + 1) }}><Icon name="chevron" size={16} /></button>
         </div></footer>}
     </section>
+    {preview && <Dialog title={t('snapshotPreview')} subtitle={preview.name} onClose={() => setPreview(null)}>
+      <div className="dialog-body" id="dialog-description">
+        <EvidenceImage src={preview.url} alt={t('evidenceAlt', { camera: preview.name })} />
+        <a className="text-button" href={preview.url} download={preview.filename}>{t('reportEvidence')}</a>
+      </div>
+    </Dialog>}
   </>
 }

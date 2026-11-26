@@ -1,6 +1,7 @@
 # Local project materials may contain device details and credentials.
 /Project Description/
 /Sample Camera Photos/
+/camera-snapshots/
 
 # Frontend
 /frontend/node_modules/

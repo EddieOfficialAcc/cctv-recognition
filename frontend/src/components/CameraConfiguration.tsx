@@ -1,20 +1,23 @@
 import { useEffect, useState } from 'react'
-import { fetchCameraConfiguration, type CameraConfigurationPage } from '../api'
+import { fetchCameraConfiguration, type CameraBrandFilter, type CameraConfigurationPage, type SnapshotRecorder } from '../api'
 import { useLocale } from '../localization'
 import { Icon } from './Icon'
+import { ManualSnapshot } from './ManualSnapshot'
 
 export function CameraConfiguration() {
   const { t, formatDate, errorMessage } = useLocale()
   const [data, setData] = useState<CameraConfigurationPage | null>(null)
   const [page, setPage] = useState(1)
+  const [brand, setBrand] = useState<CameraBrandFilter>('')
   const [refresh, setRefresh] = useState(0)
   const [updated, setUpdated] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<Error | null>(null)
+  const [capture, setCapture] = useState<'choose' | SnapshotRecorder | null>(null)
 
   useEffect(() => {
     const controller = new AbortController()
-    void fetchCameraConfiguration(page, controller.signal).then(result => {
+    void fetchCameraConfiguration(page, controller.signal, brand).then(result => {
       if (controller.signal.aborted) return
       const lastPage = Math.max(1, Math.ceil(result.total / result.page_size))
       if (page > lastPage) { setPage(lastPage); return }
@@ -28,7 +31,7 @@ export function CameraConfiguration() {
       setLoading(false)
     })
     return () => controller.abort()
-  }, [page, refresh])
+  }, [page, refresh, brand])
 
   function reload() {
     setLoading(true)
@@ -47,14 +50,35 @@ export function CameraConfiguration() {
     <div className="page-heading">
       <div><p className="eyebrow">{t('operations')}</p><h1>{t('cameraConfiguration')}</h1>
         <p className="page-description">{t('configurationDescription')}</p></div>
-      <button className="button secondary" disabled={loading} onClick={reload}>
-        <Icon name="refresh" size={16} />{t('refresh')}
-      </button>
+      <div className="configuration-actions">
+        <button className="button primary" onClick={() => setCapture('choose')}>
+          <Icon name="camera" size={16} />{t('snapshotCapture')}
+        </button>
+        <button className="button secondary" disabled={loading} onClick={reload}>
+          <Icon name="refresh" size={16} />{t('refresh')}
+        </button>
+      </div>
     </div>
     <section className="records-panel" aria-labelledby="config-title">
       <div className="panel-heading">
         <div className="section-heading"><h2 id="config-title">{t('cameraConfiguration')}</h2></div>
         <span>{updated ? t('configurationUpdated', { time: formatDate(updated, true) }) : ''}</span>
+      </div>
+      <div className="filter-bar">
+        <label><span className="sr-only">{t('configurationFilterBrand')}</span>
+          <select value={brand} onChange={event => {
+            const next = event.target.value
+            if (next !== '' && next !== 'DAHAU' && next !== 'HIKVISION') return
+            if (next === brand) return
+            setData(null)
+            changePage(1)
+            setBrand(next)
+          }}>
+            <option value="">{t('configurationAllBrands')}</option>
+            <option value="DAHAU">DAHAU</option>
+            <option value="HIKVISION">HIKVISION</option>
+          </select>
+        </label>
       </div>
       <div className="table-container" aria-busy={loading}>
         {loading ? <div className="empty-state" role="status">{t('loadingTitle')}</div> :
@@ -68,7 +92,7 @@ export function CameraConfiguration() {
               <th scope="col">{t('configurationBrand')}</th><th scope="col">{t('configurationInternalIp')}</th>
               <th scope="col">{t('configurationPort')}</th><th scope="col">{t('configurationChannels')}</th>
               <th scope="col">{t('configurationAdminName')}</th><th scope="col">{t('configurationAdminPassword')}</th>
-              <th scope="col">{t('configurationCredentials')}</th></tr></thead>
+              <th scope="col">{t('configurationCredentials')}</th><th scope="col">{t('actions')}</th></tr></thead>
             <tbody>{data.rows.map((row, index) => <tr key={`${row.shop_code}-${index}`}>
               <td>{row.shop_code ?? '—'}</td><td>{row.shop_name ?? '—'}</td><td>{row.company ?? '—'}</td><td>{row.region ?? '—'}</td>
               <td>{row.brand ?? '—'}</td><td>{row.internal_ip ?? '—'}</td><td>{row.port ?? '—'}</td>
@@ -76,6 +100,13 @@ export function CameraConfiguration() {
               <td>{row.credentials_complete ? <span aria-label={t('configurationValueHidden')}>••••••</span> : '—'}</td>
               <td>{row.credentials_complete ? <span aria-label={t('configurationValueHidden')}>••••••</span> : '—'}</td>
               <td>{t(row.credentials_complete ? 'configurationComplete' : 'configurationIncomplete')}</td>
+              <td>{row.brand === 'DAHAU' && row.shop_code && row.region && row.internal_ip &&
+                row.cam_qty !== null && row.cam_qty > 0 &&
+                <button className="text-button" onClick={() => {
+                  if (row.shop_code && row.region && row.cam_qty) {
+                    setCapture({ shop: row.shop_code, region: row.region, name: row.shop_name, channels: row.cam_qty })
+                  }
+                }}>{t('snapshotCapture')}</button>}</td>
             </tr>)}</tbody>
           </table> : <div className="empty-state">{t('configurationEmpty')}</div>}
       </div>
@@ -90,5 +121,6 @@ export function CameraConfiguration() {
         </div>
       </footer>
     </section>
+    {capture && <ManualSnapshot recorder={capture === 'choose' ? undefined : capture} onClose={() => setCapture(null)} />}
   </>
 }

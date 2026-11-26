@@ -8,6 +8,9 @@ services:
     environment:
       DB_DRIVER: ODBC Driver 18 for SQL Server
       SCHEDULED_INSPECTION_ENABLED: ${SCHEDULED_INSPECTION_ENABLED:-false}
+      SCHEDULED_INSPECTION_SNAPSHOT_DIR: /snapshots
+    volumes:
+      - ./camera-snapshots:/snapshots
     command: ["python", "-m", "app.scheduled_inspection"]
     restart: "no"
 

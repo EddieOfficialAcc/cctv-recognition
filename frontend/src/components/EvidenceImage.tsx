@@ -3,15 +3,16 @@ import { burstFrameUrl, evidenceUrl } from '../api'
 import { Icon } from './Icon'
 import { useLocale } from '../localization'
 
-export function EvidenceImage({ id, alt, thumbnail = false, frameIndex = 0 }: {
-  id: string; alt: string; thumbnail?: boolean; frameIndex?: number
-}) {
+export function EvidenceImage({ alt, thumbnail = false, ...source }: {
+  alt: string; thumbnail?: boolean
+} & ({ id: string; frameIndex?: number } | { src: string })) {
   const { t } = useLocale()
   const [failed, setFailed] = useState(false)
   return <div className={thumbnail ? 'evidence-thumbnail' : 'evidence-image'}>
     {failed ? <span className="image-failure"><Icon name="image" />
       {!thumbnail && t('evidenceError')}</span> :
-      <img src={frameIndex ? burstFrameUrl(id, frameIndex) : evidenceUrl(id)} alt={alt} loading={thumbnail ? 'lazy' : 'eager'}
+      <img src={'src' in source ? source.src : source.frameIndex ? burstFrameUrl(source.id, source.frameIndex) : evidenceUrl(source.id)}
+        alt={alt} loading={thumbnail ? 'lazy' : 'eager'}
         onError={() => setFailed(true)} />}
   </div>
 }

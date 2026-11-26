@@ -3,7 +3,7 @@ export type ReviewStatus = 'new' | 'acknowledged' | 'false_positive'
 export type Outcome = 'flagged' | 'needs_review'
 export type Region = 'Hong Kong' | 'Macau'
 
-export type ErrorCode = 'requestError' | 'storageError' | 'analysisError' | 'validationError' | 'notFoundError' |
+export type ErrorCode = 'snapshotConfigurationError' | 'requestError' | 'storageError' | 'analysisError' | 'validationError' | 'notFoundError' |
   'responseError' | 'fileTypeError' | 'fileSizeError' | 'imageCorruptError' | 'resolutionError' | 'animatedError'
 
 export class ApiError extends Error {
@@ -196,9 +196,48 @@ export function fetchRecords(params: URLSearchParams, signal: AbortSignal) {
   return request(`/api/recognitions?${params}`, isPage, { signal })
 }
 
-export function fetchCameraConfiguration(page: number, signal: AbortSignal) {
+export type CameraBrandFilter = '' | 'DAHAU' | 'HIKVISION'
+
+export function fetchCameraConfiguration(page: number, signal: AbortSignal, brand: CameraBrandFilter) {
   const params = new URLSearchParams({ page: String(page), page_size: '20' })
+  if (brand) params.set('brand', brand)
   return request(`/api/camera-configuration?${params}`, isCameraConfigurationPage, { signal, cache: 'no-store' })
+}
+
+export interface SnapshotRecorder {
+  shop: string
+  region: string
+  name: string | null
+  channels: number
+}
+
+export function fetchSnapshotRecorders(signal: AbortSignal) {
+  return request('/api/camera-configuration/snapshot-recorders', (value): value is SnapshotRecorder[] =>
+    Array.isArray(value) && value.every(row => isObject(row) && typeof row.shop === 'string' &&
+      typeof row.region === 'string' && (row.name === null || typeof row.name === 'string') &&
+      typeof row.channels === 'number' && Number.isInteger(row.channels) && row.channels >= 1 && row.channels <= 256),
+    { signal, cache: 'no-store' })
+}
+
+export async function captureCameraSnapshot(shop_code: string, region: string, channel: number) {
+  const response = await fetch('/api/camera-configuration/snapshot', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+    body: JSON.stringify({ shop_code, region, channel }),
+  })
+  if (!response.ok) {
+    if (response.status === 401) window.dispatchEvent(new Event('cctv-session-expired'))
+    if (response.headers.get('content-type')?.includes('application/json')) {
+      const body: unknown = await response.json()
+      if (isObject(body) && body.detail === 'Manual snapshot capture is not configured.') {
+        throw new ApiError('snapshotConfigurationError', body.detail)
+      }
+    }
+    throw new Error(`Manual snapshot failed (HTTP ${response.status}).`)
+  }
+  const image = await response.blob()
+  if (image.type !== 'image/jpeg' || !image.size) throw new Error('Empty or invalid snapshot response.')
+  return image
 }
 
 export function fetchInspectionRuns(signal: AbortSignal) {
