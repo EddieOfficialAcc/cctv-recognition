@@ -9,6 +9,7 @@ from urllib.request import (
 )
 
 from app.inspection import MAX_UPLOAD_BYTES
+from app.snapshot_storage import DEFAULT_SNAPSHOT_DIR
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -24,6 +25,7 @@ class RecorderSettings(BaseSettings):
     )
 
     dahau_password: SecretStr = SecretStr("")
+    snapshot_dir: Path = DEFAULT_SNAPSHOT_DIR
 
 
 class RecorderError(RuntimeError):

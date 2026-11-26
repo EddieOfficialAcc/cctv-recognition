@@ -3,7 +3,7 @@ import { fetchInspectionRuns, type InspectionRun } from '../api'
 import { useLocale } from '../localization'
 import { Icon } from './Icon'
 
-export function SnapshotWorker() {
+export function SnapshotWorker({ onOpenReports }: { onOpenReports: () => void }) {
   const { t, errorMessage } = useLocale()
   const [latest, setLatest] = useState<InspectionRun | null>(null)
   const [error, setError] = useState<Error | null>(null)
@@ -39,9 +39,12 @@ export function SnapshotWorker() {
     <div className="page-heading">
       <div><p className="eyebrow">{t('operations')}</p><h1>{t('snapshotWorker')}</h1>
         <p className="page-description">{t('workerSchedule')}</p></div>
+      <div className="configuration-actions">
+      <button className="button primary" onClick={onOpenReports}><Icon name="camera" size={16} />{t('batchOpenReports')}</button>
       <button className="button secondary" disabled={loading} onClick={() => {
         setError(null); setLoading(true); setRefresh(value => value + 1)
       }}><Icon name="refresh" size={16} />{t('refresh')}</button>
+      </div>
     </div>
     <section className="records-panel" aria-labelledby="worker-latest">
       <div className="panel-heading"><h2 id="worker-latest">{t('workerLatestRun')}</h2></div>

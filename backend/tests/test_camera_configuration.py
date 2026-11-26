@@ -1,4 +1,6 @@
 from io import BytesIO
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -12,6 +14,12 @@ from app.main import app
 
 class CameraConfigurationTest(unittest.TestCase):
     def setUp(self) -> None:
+        archive = TemporaryDirectory()
+        self.addCleanup(archive.cleanup)
+        self.archive = Path(archive.name)
+        environment = patch.dict("os.environ", {"SCHEDULED_INSPECTION_SNAPSHOT_DIR": archive.name})
+        environment.start()
+        self.addCleanup(environment.stop)
         self.client = TestClient(app)
         self.addCleanup(self.client.close)
 
@@ -68,6 +76,12 @@ class CameraConfigurationTest(unittest.TestCase):
         self.assertEqual(cursor.execute.call_args.args[1:], ("001", "Hong Kong"))
         recorder.assert_called_once_with("192.0.2.1:81", "admin", "dummy-only")
         recorder.return_value.snapshot.assert_called_once_with(2)
+        files = list(self.archive.rglob("*.jpeg"))
+        self.assertEqual(len(files), 1)
+        self.assertIn("manual", files[0].parts)
+        self.assertEqual(files[0].name, "channel-002.jpeg")
+        self.assertEqual(files[0].read_bytes(), response.content)
+        self.assertIn(".jpeg", response.headers["content-disposition"])
 
     def test_manual_snapshot_rejects_unconfigured_channel_without_contacting_recorder(self) -> None:
         app.dependency_overrides[require_user] = lambda: "operator"

@@ -3,7 +3,7 @@ export type ReviewStatus = 'new' | 'acknowledged' | 'false_positive'
 export type Outcome = 'flagged' | 'needs_review'
 export type Region = 'Hong Kong' | 'Macau'
 
-export type ErrorCode = 'snapshotConfigurationError' | 'requestError' | 'storageError' | 'analysisError' | 'validationError' | 'notFoundError' |
+export type ErrorCode = 'batchAlreadyRunning' | 'batchNoRecorders' | 'snapshotConfigurationError' | 'requestError' | 'storageError' | 'analysisError' | 'validationError' | 'notFoundError' |
   'responseError' | 'fileTypeError' | 'fileSizeError' | 'imageCorruptError' | 'resolutionError' | 'animatedError'
 
 export class ApiError extends Error {
@@ -73,6 +73,8 @@ export interface CameraConfigurationPage {
 }
 
 export interface InspectionRun {
+  id?: string
+  error?: string
   run_date: string
   status: string
   started_at: string | null
@@ -82,6 +84,7 @@ export interface InspectionRun {
   failed: number
   skipped: number
   interrupted: number
+  saved: number
 }
 
 export interface InspectionItem {
@@ -148,8 +151,13 @@ function isCameraConfigurationPage(value: unknown): value is CameraConfiguration
 
 function isInspectionRun(value: unknown): value is InspectionRun {
   return isObject(value) && typeof value.run_date === 'string' && typeof value.status === 'string' &&
+    (value.error === undefined || typeof value.error === 'string') &&
     ['started_at', 'finished_at'].every(key => value[key] === null || typeof value[key] === 'string') &&
-    ['total', 'completed', 'failed', 'skipped', 'interrupted'].every(key => typeof value[key] === 'number')
+    ['total', 'completed', 'failed', 'skipped', 'interrupted', 'saved'].every(key => typeof value[key] === 'number')
+}
+
+function isSnapshotBatch(value: unknown): value is InspectionRun & { id: string } {
+  return isInspectionRun(value) && typeof value.id === 'string'
 }
 
 function isInspectionItemPage(value: unknown): value is InspectionItemPage {
@@ -178,6 +186,9 @@ async function request<T>(
       response.status === 404 ? 'notFoundError' :
       response.status === 413 ? 'fileSizeError' :
       response.status === 422 ? 'validationError' : 'requestError'
+    if (message === 'Manual snapshot capture is not configured.') code = 'snapshotConfigurationError'
+    if (message === 'A manual snapshot batch is already running.') code = 'batchAlreadyRunning'
+    if (message === 'No DAHAU recorders are configured for batch capture.') code = 'batchNoRecorders'
     if (response.status === 422) {
       if (message.includes('supported')) code = 'fileTypeError'
       else if (message.includes('10 MB')) code = 'fileSizeError'
@@ -240,14 +251,21 @@ export async function captureCameraSnapshot(shop_code: string, region: string, c
   return image
 }
 
-export function fetchInspectionRuns(signal: AbortSignal) {
-  return request('/api/inspection-runs', (value): value is InspectionRun[] =>
-    Array.isArray(value) && value.every(isInspectionRun), { signal, cache: 'no-store' })
+export function startSnapshotBatch() {
+  return request('/api/snapshot-batches', isSnapshotBatch, {
+    method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' },
+  })
 }
 
-export function fetchInspectionItems(date: string, page: number, signal: AbortSignal) {
+export function fetchInspectionRuns(signal: AbortSignal, manual = false) {
+  return request(manual ? '/api/snapshot-batches' : '/api/inspection-runs', (value): value is InspectionRun[] =>
+    Array.isArray(value) && value.every(manual ? isSnapshotBatch : isInspectionRun), { signal, cache: 'no-store' })
+}
+
+export function fetchInspectionItems(id: string, page: number, signal: AbortSignal, manual = false) {
   const params = new URLSearchParams({ page: String(page), page_size: '20' })
-  return request(`/api/inspection-runs/${encodeURIComponent(date)}/items?${params}`, isInspectionItemPage,
+  const base = manual ? '/api/snapshot-batches' : '/api/inspection-runs'
+  return request(`${base}/${encodeURIComponent(id)}/items?${params}`, isInspectionItemPage,
     { signal, cache: 'no-store' })
 }
 

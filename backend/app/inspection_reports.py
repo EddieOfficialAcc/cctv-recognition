@@ -33,6 +33,7 @@ class Run(BaseModel):
     failed: int
     skipped: int
     interrupted: int
+    saved: int
 
 
 class Item(BaseModel):
@@ -73,12 +74,13 @@ def list_runs() -> list[Run]:
             "SUM(CASE WHEN i.status='completed' THEN 1 ELSE 0 END), "
             "SUM(CASE WHEN i.status='failed' THEN 1 ELSE 0 END), "
             "SUM(CASE WHEN i.status='skipped' THEN 1 ELSE 0 END), "
-            "SUM(CASE WHEN i.status='interrupted' THEN 1 ELSE 0 END) "
+            "SUM(CASE WHEN i.status='interrupted' THEN 1 ELSE 0 END), "
+            "SUM(CASE WHEN i.evidence IS NOT NULL THEN 1 ELSE 0 END) "
             "FROM dbo.inspection_runs r LEFT JOIN dbo.inspection_run_items i ON i.run_date=r.run_date "
             "GROUP BY r.run_date, r.status, r.started_at, r.finished_at ORDER BY r.run_date DESC"
         ).fetchall()
     return [Run(run_date=r[0], status=r[1], started_at=_utc(r[2]), finished_at=_utc(r[3]),
-                total=r[4], completed=r[5], failed=r[6], skipped=r[7], interrupted=r[8]) for r in rows]
+                total=r[4], completed=r[5], failed=r[6], skipped=r[7], interrupted=r[8], saved=r[9]) for r in rows]
 
 
 @router.get("/{run_date}/items", response_model=ItemPage)

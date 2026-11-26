@@ -11,6 +11,7 @@ from app.auth import router as auth_router
 from app.camera_configuration import router as camera_configuration_router
 from app.inspection_reports import router as inspection_reports_router
 from app.recognition import router as recognition_router
+from app.snapshot_batches import router as snapshot_batches_router
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ app.include_router(auth_router)
 app.include_router(camera_configuration_router)
 app.include_router(inspection_reports_router)
 app.include_router(recognition_router)
+app.include_router(snapshot_batches_router)
 
 
 @app.get("/api/health", response_model=HealthResponse, tags=["health"])

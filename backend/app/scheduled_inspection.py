@@ -1,14 +1,14 @@
 """Opt-in daily worker for DAHAU recorders; device compatibility is unverified."""
 from collections.abc import Container
 from contextlib import closing
+from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 import hashlib
 import logging
 import os
 from pathlib import Path
-from tempfile import NamedTemporaryFile
 import time as clock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pyodbc
 from pydantic import ValidationError
@@ -18,35 +18,16 @@ from app.inspection import InvalidScreenshot, analyze_screenshot, prepare_screen
 from app.recognition_models import RecognitionRecord
 from app import recognition_repository
 from app.recorder import MAX_CHANNELS, Recorder, RecorderAuthenticationError, RecorderError, RecorderSettings
+from app.snapshot_storage import DEFAULT_SNAPSHOT_DIR, SnapshotStorageError, save_snapshot
 from app.vision_analysis import AnalysisError, VisionSettings
 
 logger = logging.getLogger(__name__)
 HONG_KONG = timezone(timedelta(hours=8))
 RUN_TIME = time(9, 30)
-DEFAULT_SNAPSHOT_DIR = Path(__file__).resolve().parents[2] / "camera-snapshots"
 
 
 def _is_run_day(day: date, public_holidays: Container[date]) -> bool:
     return day.weekday() < 5 and day not in public_holidays
-
-
-def _save_snapshot(root: Path, run_date: date, recorder_id: str, channel: int, evidence: bytes) -> None:
-    directory = root / run_date.isoformat() / recorder_id
-    temporary = None
-    try:
-        directory.mkdir(parents=True, exist_ok=True)
-        with NamedTemporaryFile(dir=directory, suffix=".tmp", delete=False) as output:
-            temporary = Path(output.name)
-            output.write(evidence)
-        temporary.replace(directory / f"channel-{channel:03d}.jpg")
-    except OSError:
-        raise RecorderError("Could not write snapshot to the local archive.") from None
-    finally:
-        if temporary is not None:
-            try:
-                temporary.unlink(missing_ok=True)
-            except OSError:
-                logger.warning("Could not remove a temporary snapshot file.")
 
 
 def _utc_now() -> datetime:
@@ -62,11 +43,12 @@ def _execute(sql: str, *parameters) -> None:
         cursor.execute(sql, *parameters)
 
 
-def _eligible_recorders() -> list:
+def _eligible_recorders(*, include_missing_addresses: bool = False) -> list:
+    address_filter = "" if include_missing_addresses else " AND internal_ip IS NOT NULL"
     with closing(connect(DatabaseSettings())) as connection, closing(connection.cursor()) as cursor:
         return cursor.execute(
             "SELECT shop_code, region, internal_ip, cam_qty "
-            "FROM dbo.cctv_config WHERE brand = 'DAHAU' AND internal_ip IS NOT NULL "
+            f"FROM dbo.cctv_config WHERE brand = 'DAHAU'{address_filter} "
             "ORDER BY shop_code"
         ).fetchall()
 
@@ -102,7 +84,25 @@ def _recorder_identifier(shop: str, region: str, address: str) -> str:
 
 def _process_recorder(run_date: date, recorder_index: int, row,
                       seen_recorders: set[tuple[str, str, str]], snapshot_dir: Path,
-                      shared_password: str, analyze: bool) -> None:
+                      shared_password: str, analyze: bool, plan: "CapturePlan | None" = None) -> None:
+    plan = plan or _prepare_recorder(run_date, recorder_index, row, seen_recorders, shared_password)
+    if plan is None:
+        return
+    recorder, recorder_id, shop, region, items = plan.recorder, plan.recorder_id, plan.shop, plan.region, plan.items
+    _capture_channels(recorder, recorder_id, shop, region, items, run_date, snapshot_dir, analyze)
+
+
+@dataclass
+class CapturePlan:
+    recorder: Recorder
+    recorder_id: str
+    shop: str
+    region: str
+    items: list[tuple[int, str, UUID]]
+
+
+def _prepare_recorder(run_date: date, recorder_index: int, row,
+                      seen_recorders: set[tuple[str, str, str]], shared_password: str) -> CapturePlan | None:
     shop, region, ip, quantity = row
     shop = (shop or "").strip()
     region = (region or "").strip()
@@ -119,7 +119,7 @@ def _process_recorder(run_date: date, recorder_index: int, row,
     except RecorderError as error:
         _add_item(run_date, recorder_index, shop[:50], region[:20],
                   0, "", "skipped", "none", str(error))
-        return
+        return None
 
     recorder_id = _recorder_identifier(shop, region, recorder.base)
     items = []
@@ -131,6 +131,12 @@ def _process_recorder(run_date: date, recorder_index: int, row,
             "pending", "configured_count", "",
         )
         items.append((channel, identity, item_id))
+    return CapturePlan(recorder, recorder_id, shop, region, items)
+
+
+def _capture_channels(recorder: Recorder, recorder_id: str, shop: str, region: str,
+                      items: list[tuple[int, str, UUID]], run_date: date, snapshot_dir: Path,
+                      analyze: bool) -> None:
     authentication_failed = False
     for channel, name, item_id in items:
         if authentication_failed:
@@ -143,7 +149,7 @@ def _process_recorder(run_date: date, recorder_index: int, row,
             image = recorder.snapshot(channel)
             captured_at = _utc_now()
             evidence = prepare_screenshot(image)
-            _save_snapshot(snapshot_dir, run_date, recorder_id, channel, evidence)
+            save_snapshot(snapshot_dir, run_date, recorder_id, channel, evidence)
             _execute(
                 "UPDATE dbo.inspection_run_items SET status=?, captured_at=?, evidence=? WHERE id=?",
                 "captured" if analyze else "completed", _db_time(captured_at), pyodbc.Binary(evidence), str(item_id),
@@ -154,7 +160,7 @@ def _process_recorder(run_date: date, recorder_index: int, row,
             analysis = analyze_screenshot(evidence, captured_at, baseline)
             record = RecognitionRecord(
                 id=item_id, shop_code=shop, camera_name=name, region=region,
-                filename=f"channel-{channel}.jpg", uploaded_at=_utc_now(), captured_at=captured_at,
+                filename=f"channel-{channel}.jpeg", uploaded_at=_utc_now(), captured_at=captured_at,
                 width=analysis.width, height=analysis.height,
                 outcome="flagged" if any(check.status == "flagged" for check in analysis.checks) else "needs_review",
                 review_status="new", review_note="", reviewed_at=None,
@@ -162,7 +168,7 @@ def _process_recorder(run_date: date, recorder_index: int, row,
             )
             recognition_repository.save_record(record, analysis.evidence)
             _execute("UPDATE dbo.inspection_run_items SET status='completed' WHERE id=?", str(item_id))
-        except (RecorderError, InvalidScreenshot, AnalysisError) as error:
+        except (RecorderError, InvalidScreenshot, AnalysisError, SnapshotStorageError) as error:
             authentication_failed = isinstance(error, RecorderAuthenticationError)
             _execute(
                 "UPDATE dbo.inspection_run_items SET status='failed', message=? WHERE id=?",
@@ -200,9 +206,13 @@ def _run(today: date, snapshot_dir: Path, shared_password: str, analyze: bool) -
              today, _db_time(_utc_now()))
     rows = _eligible_recorders()
     seen_recorders: set[tuple[str, str, str]] = set()
-    for index, row in enumerate(rows, 1):
+    plans = [(index, row, _prepare_recorder(today, index, row, seen_recorders, shared_password))
+             for index, row in enumerate(rows, 1)]
+    for index, row, plan in plans:
+        if plan is None:
+            continue
         try:
-            _process_recorder(today, index, row, seen_recorders, snapshot_dir, shared_password, analyze)
+            _process_recorder(today, index, row, seen_recorders, snapshot_dir, shared_password, analyze, plan)
         except pyodbc.Error:
             raise
         except Exception as error:
@@ -231,14 +241,15 @@ def main() -> None:
     if os.environ.get("SCHEDULED_INSPECTION_ENABLED", "").lower() != "true":
         logger.info("Scheduled inspection is disabled.")
         return
-    shared_password = RecorderSettings().dahau_password.get_secret_value()
+    recorder_settings = RecorderSettings()
+    shared_password = recorder_settings.dahau_password.get_secret_value()
     if not shared_password or not shared_password.strip():
         logger.error("Set SCHEDULED_INSPECTION_DAHAU_PASSWORD before starting the worker.")
         raise SystemExit(1)
     from holidays import country_holidays
 
     public_holidays = country_holidays("HK", observed=True)
-    snapshot_dir = Path(os.environ.get("SCHEDULED_INSPECTION_SNAPSHOT_DIR", str(DEFAULT_SNAPSHOT_DIR)))
+    snapshot_dir = recorder_settings.snapshot_dir
     analyze = os.environ.get("SCHEDULED_INSPECTION_ANALYZE", "").lower() == "true"
     if analyze:
         VisionSettings()

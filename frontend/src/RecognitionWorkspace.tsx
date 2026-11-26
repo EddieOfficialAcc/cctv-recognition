@@ -178,7 +178,7 @@ export function RecognitionWorkspace({ apiStatus, onLogout }: { apiStatus: strin
       <main id="main-content">
         {logoutError && <div className="error-message language-warning" role="alert">{t('loginLogoutError')}</div>}
         {view === 'configuration' ? <CameraConfiguration /> : view === 'reports' ? <InspectionReports onSelect={setSelected} /> :
-          view === 'worker' ? <SnapshotWorker /> : <>
+          view === 'worker' ? <SnapshotWorker onOpenReports={() => setView('reports')} /> : <>
         <div className="page-heading">
           <div><p className="eyebrow">{t('qualityAssurance')}</p><h1>{t('recognitionRecords')}</h1>
             <p className="page-description">{t('pageDescription')}</p>

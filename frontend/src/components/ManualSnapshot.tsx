@@ -52,7 +52,7 @@ export function ManualSnapshot({ recorder, onClose }: {
     if (!selected) return
     const { shop, region } = selected
     setBusy(true); setError(null)
-    const filename = `snapshot-${shop.replace(/[^a-z0-9_-]/gi, '_')}-channel-${channel}-${Date.now()}.jpg`
+    const filename = `snapshot-${shop.replace(/[^a-z0-9_-]/gi, '_')}-channel-${channel}-${Date.now()}.jpeg`
     try {
       let destination = null
       try {

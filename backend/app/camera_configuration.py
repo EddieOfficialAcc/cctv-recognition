@@ -1,7 +1,9 @@
 from contextlib import closing
+from datetime import datetime, timedelta, timezone
 import logging
 from threading import Lock
 from typing import Annotated, Literal
+from uuid import uuid4
 
 import pyodbc
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -11,6 +13,7 @@ from app.auth import require_user
 from app.database import DatabaseSettings, connect
 from app.inspection import InvalidScreenshot, prepare_screenshot
 from app.recorder import MAX_CHANNELS, Recorder, RecorderError, RecorderSettings
+from app.snapshot_storage import SnapshotStorageError, save_snapshot
 
 logger = logging.getLogger(__name__)
 manual_capture_lock = Lock()
@@ -117,7 +120,8 @@ def list_snapshot_recorders(response: Response) -> list[SnapshotRecorder]:
 
 @router.post("/snapshot", response_class=Response)
 def capture_snapshot(selection: SnapshotRequest) -> Response:
-    password = RecorderSettings().dahau_password.get_secret_value()
+    settings = RecorderSettings()
+    password = settings.dahau_password.get_secret_value()
     if not password or not password.strip():
         raise HTTPException(503, "Manual snapshot capture is not configured.")
     with closing(connect(DatabaseSettings())) as connection, closing(connection.cursor()) as cursor:
@@ -137,10 +141,18 @@ def capture_snapshot(selection: SnapshotRequest) -> Response:
         raise HTTPException(429, "Another manual capture is in progress. Try again shortly.")
     try:
         image = prepare_screenshot(Recorder(address, "admin", password).snapshot(selection.channel))
+        capture_id = str(uuid4())
+        day = datetime.now(timezone(timedelta(hours=8))).date()
+        try:
+            save_snapshot(settings.snapshot_dir / "manual", day, capture_id, selection.channel, image)
+        except SnapshotStorageError:
+            logger.error("Manual snapshot archive write failed.")
+            raise HTTPException(503, "Snapshot captured but could not be saved to the local archive.") from None
     except (RecorderError, InvalidScreenshot) as error:
         logger.warning("Manual snapshot capture failed (%s).", type(error).__name__)
         raise HTTPException(502, "The camera did not return a valid snapshot.") from None
     finally:
         manual_capture_lock.release()
     return Response(content=image, media_type="image/jpeg",
-                    headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+                    headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+                             "Content-Disposition": f'inline; filename="snapshot-{capture_id}.jpeg"'})

@@ -82,6 +82,20 @@ class ScheduledInspectionTest(unittest.TestCase):
                 self.assertEqual(RecorderSettings(_env_file=env_file).dahau_password.get_secret_value(),
                                  "dummy-process-password")
 
+    def test_batch_plans_all_channels_before_contacting_any_recorder(self) -> None:
+        rows = [("001", "Hong Kong", "192.0.2.1", 2), ("002", "Hong Kong", "192.0.2.2", 3)]
+        day = date(2026, 11, 26)
+        with TemporaryDirectory() as folder, patch("app.scheduled_inspection._execute"), patch(
+            "app.scheduled_inspection._eligible_recorders", return_value=rows,
+        ), patch("app.scheduled_inspection._recorder_identifier", side_effect=[str(uuid4()), str(uuid4())]), patch(
+            "app.scheduled_inspection._add_item", side_effect=lambda *args: uuid4(),
+        ) as add_item, patch("app.scheduled_inspection._capture_channels") as capture:
+            def verify_queue(*args):
+                self.assertEqual(add_item.call_count, 5)
+            capture.side_effect = verify_queue
+            worker._run(day, Path(folder), "dummy-password", False)
+        self.assertEqual(capture.call_count, 2)
+
     def test_capture_only_saves_valid_jpeg_and_continues_after_bad_image(self) -> None:
         image = BytesIO()
         Image.new("RGB", (4, 3)).save(image, format="PNG")
@@ -104,7 +118,7 @@ class ScheduledInspectionTest(unittest.TestCase):
             )
 
             archived = list(Path(folder).rglob("*.*"))
-            self.assertEqual(archived, [Path(folder) / "2026-11-26" / recorder_id / "channel-002.jpg"])
+            self.assertEqual(archived, [Path(folder) / "2026-11-26" / recorder_id / "channel-002.jpeg"])
             with Image.open(archived[0]) as saved:
                 self.assertEqual((saved.format, saved.size), ("JPEG", (4, 3)))
             recorder_type.assert_called_once_with("192.0.2.1:81", "admin", "test-only")
