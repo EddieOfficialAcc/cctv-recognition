@@ -4,6 +4,70 @@ import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createServer } from 'vite'
 
+test('automatic schedule page locales and revision-aware API contracts', async () => {
+  const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: 'custom' })
+  const oldStorage = globalThis.localStorage
+  const oldFetch = globalThis.fetch
+  try {
+    const api = await server.ssrLoadModule('/src/api.ts')
+    const { SnapshotWorker } = await server.ssrLoadModule('/src/components/SnapshotWorker.tsx')
+    const { LocaleContext, useLanguageState } = await server.ssrLoadModule('/src/localization.ts')
+    for (const [language, heading] of [
+      ['en', 'Automatic AI checks'], ['zh-Hant', '自動 AI 檢查'], ['zh-Hans', '自动 AI 检查'],
+    ]) {
+      globalThis.localStorage = { getItem: () => language }
+      function Provider({ children }) {
+        return React.createElement(LocaleContext.Provider, { value: useLanguageState() }, children)
+      }
+      const html = renderToStaticMarkup(React.createElement(Provider, null, React.createElement(SnapshotWorker, { onOpenReports() {} })))
+      assert.ok(html.includes(heading))
+      assert.match(html, /UTC\+08:00/)
+      assert.doesNotMatch(html, /SCHEDULED_INSPECTION_ENABLED/)
+    }
+    const input = { name: 'Weekly', enabled: false, cron: '30 9 * * 1', skip_holidays: true }
+    const schedule = { ...input, id: 'schedule', revision: 3, next_run: null }
+    const dates = ['2026-11-30T01:30:00Z', '2026-12-07T01:30:00Z', '2026-12-14T01:30:00Z']
+    const page = { schedules: [schedule], history: [], scheduler_online: false, timezone: 'Asia/Hong_Kong' }
+    const calls = []
+    globalThis.fetch = async (url, options) => {
+      calls.push({ url, options })
+      return Response.json(options?.method === 'DELETE' ? { deleted: true } :
+        url.endsWith('/preview') ? { next_runs: dates } : options?.method ? schedule : page)
+    }
+    const signal = new AbortController().signal
+    await api.fetchReviewSchedules(signal)
+    await api.saveReviewSchedule(input)
+    await api.saveReviewSchedule(schedule, schedule)
+    await api.previewReviewSchedule(input)
+    await api.deleteReviewSchedule(schedule)
+    assert.equal(calls[0].options.cache, 'no-store')
+    assert.equal(calls[0].options.signal, signal)
+    assert.deepEqual(JSON.parse(calls[1].options.body), input)
+    assert.equal(calls[1].options.method, 'POST')
+    assert.equal(calls[2].url, '/api/review-schedules/schedule')
+    assert.equal(calls[2].options.method, 'PUT')
+    assert.deepEqual(JSON.parse(calls[2].options.body), { ...input, revision: 3 })
+    assert.equal(calls[3].url, '/api/review-schedules/preview')
+    assert.equal(calls[4].url, '/api/review-schedules/schedule?revision=3')
+    for (const call of calls.slice(1)) assert.equal(call.options.headers['X-Requested-With'], 'XMLHttpRequest')
+    globalThis.fetch = async () => Response.json({ ...schedule, enabled: true })
+    await assert.rejects(api.saveReviewSchedule(input), { code: 'responseError' })
+    globalThis.fetch = async () => Response.json({ next_runs: ['invalid date'] })
+    await assert.rejects(api.previewReviewSchedule(input), { code: 'responseError' })
+    globalThis.fetch = async () => Response.json({ ...page, timezone: 'UTC' })
+    await assert.rejects(api.fetchReviewSchedules(signal), { code: 'responseError' })
+    globalThis.fetch = async () => Response.json({ detail: 'Schedule changed.' }, { status: 409 })
+    await assert.rejects(api.saveReviewSchedule(input, schedule), { code: 'scheduleConflictError' })
+    globalThis.fetch = async () => Response.json({ detail: [] }, { status: 422 })
+    await assert.rejects(api.previewReviewSchedule(input), { code: 'scheduleValidationError' })
+  } finally {
+    globalThis.fetch = oldFetch
+    if (oldStorage === undefined) delete globalThis.localStorage
+    else globalThis.localStorage = oldStorage
+    await server.close()
+  }
+})
+
 test('AI review progress, localization, queue API contracts and strict response validation', async () => {
   const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: 'custom' })
   const oldStorage = globalThis.localStorage

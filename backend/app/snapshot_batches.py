@@ -9,6 +9,7 @@ from datetime import datetime
 import logging
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+from threading import Event
 import time as clock
 from typing import Annotated, Literal
 from uuid import UUID, uuid4
@@ -39,6 +40,7 @@ class BatchRun(Run):
     id: UUID
     error: str = ""
     analysis_error: str = ""
+    schedule_name: str = ""
 
 
 class BatchReport(BaseModel):
@@ -52,6 +54,7 @@ class BatchReport(BaseModel):
     recheck_skipped: bool = False
     auto_analyze: bool = False
     analysis_error: str = ""
+    schedule_name: str = ""
 
     def summary(self) -> BatchRun:
         counts = {status: sum(item.status == status for item in self.items)
@@ -60,7 +63,7 @@ class BatchReport(BaseModel):
             id=self.id, run_date=self.started_at.astimezone(HONG_KONG).date(),
             status=self.status, started_at=self.started_at, finished_at=self.finished_at,
             total=len(self.items), saved=sum(item.has_evidence for item in self.items),
-            error=self.error, analysis_error=self.analysis_error, **counts,
+            error=self.error, analysis_error=self.analysis_error, schedule_name=self.schedule_name, **counts,
         )
 
 
@@ -224,7 +227,13 @@ def _evidence_path(root: Path, report: BatchReport, item: Item) -> Path:
             / str(item.recorder_index) / f"channel-{item.channel:03d}.jpeg")
 
 
+class CaptureStoppedError(RuntimeError):
+    pass
+
+
 def _failure_reason(error: Exception) -> str:
+    if isinstance(error, CaptureStoppedError):
+        return "Backend stopped before scheduled capture completed. Saved snapshots and AI jobs are retained."
     if isinstance(error, OSError):
         windows_code = getattr(error, "winerror", None)
         code = f"Windows error {windows_code}" if windows_code is not None else f"OS error {error.errno}"
@@ -235,7 +244,8 @@ def _failure_reason(error: Exception) -> str:
     return f"Unexpected batch processing error ({type(error).__name__}). Check backend logs."
 
 
-def _capture_batch(root: Path, report: BatchReport, recorders: dict[int, Recorder], connection) -> None:
+def _capture_batch(root: Path, report: BatchReport, recorders: dict[int, Recorder], connection,
+                   *, stopped: Event | None = None) -> None:
     try:
         exclusions = ChannelExclusions(root)
         present: dict[int, set[int]] = {}
@@ -244,6 +254,8 @@ def _capture_batch(root: Path, report: BatchReport, recorders: dict[int, Recorde
         for item in report.items:
             if item.status != "pending":
                 continue
+            if stopped is not None and stopped.is_set():
+                raise CaptureStoppedError()
             with closing(connection.cursor()) as cursor:
                 cursor.execute("SELECT 1").fetchone()
             if item.recorder_index in rejected:

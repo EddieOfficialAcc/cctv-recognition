@@ -14,38 +14,25 @@ from app.recorder import Recorder, RecorderAuthenticationError, RecorderSettings
 
 
 class ScheduledInspectionTest(unittest.TestCase):
-    def test_worker_starts_at_0930_on_working_days_only(self) -> None:
-        fake_calendar = ModuleType("holidays")
-        calendar_factory = Mock(return_value={date(2026, 12, 25)})
-        setattr(fake_calendar, "country_holidays", calendar_factory)
-        polls = [
-            datetime(2026, 12, 24, 9, 29, 59, tzinfo=worker.HONG_KONG),
-            datetime(2026, 12, 24, 9, 30, tzinfo=worker.HONG_KONG),
-            datetime(2026, 12, 24, 9, 30, 15, tzinfo=worker.HONG_KONG),  # After capture
-            datetime(2026, 12, 25, 9, 30, tzinfo=worker.HONG_KONG),
-            datetime(2026, 12, 26, 9, 30, tzinfo=worker.HONG_KONG),
-            datetime(2026, 12, 28, 9, 30, 31, tzinfo=worker.HONG_KONG),
-        ]
-        with patch.dict("sys.modules", {"holidays": fake_calendar}), patch.dict(
+    def test_cli_delegates_to_shared_frontend_schedules_without_daily_trigger(self) -> None:
+        with patch.dict(
             "os.environ", {
                 "SCHEDULED_INSPECTION_ENABLED": "true",
                 "SCHEDULED_INSPECTION_DAHAU_PASSWORD": "test-only",
+                "SNAPSHOT_ANALYSIS_WORKER_ENABLED": "true",
             }, clear=True,
-        ), patch("app.scheduled_inspection.connect") as connect, patch(
-            "app.scheduled_inspection.DatabaseSettings",
         ), patch("app.scheduled_inspection._run") as run, patch(
-            "app.scheduled_inspection._mark_missed_and_interrupted",
-        ), patch("app.scheduled_inspection.clock.sleep"), patch(
-            "app.scheduled_inspection.datetime",
-        ) as worker_datetime:
-            connect.return_value.cursor.return_value.execute.return_value.fetchone.return_value = (0,)
-            worker_datetime.combine.side_effect = datetime.combine
-            worker_datetime.now.side_effect = [*polls, KeyboardInterrupt]
+            "app.review_schedules.ReviewScheduler",
+        ) as scheduler, patch("app.snapshot_analysis.AnalysisWorker") as analysis, patch(
+            "app.scheduled_inspection.clock.sleep", side_effect=KeyboardInterrupt,
+        ):
             with self.assertRaises(KeyboardInterrupt):
                 worker.main()
-
-        calendar_factory.assert_called_once_with("HK", observed=True)
-        run.assert_called_once_with(date(2026, 12, 24), worker.DEFAULT_SNAPSHOT_DIR, "test-only", False)
+        scheduler.return_value.start.assert_called_once()
+        scheduler.return_value.stop.assert_called_once()
+        analysis.return_value.start.assert_called_once()
+        analysis.return_value.stop.assert_called_once()
+        run.assert_not_called()
 
     def test_snapshot_uses_each_recorder_address_and_channel(self) -> None:
         with patch("app.recorder.build_opener") as build_opener:

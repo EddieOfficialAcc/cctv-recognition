@@ -1,4 +1,8 @@
-"""Opt-in daily worker for DAHAU recorders; device compatibility is unverified."""
+"""Legacy daily-report helpers and optional frontend-managed scheduler CLI.
+
+The backend starts the shared schedule engine automatically. This CLI uses the
+same leases and settings; it no longer creates a separate fixed daily trigger.
+"""
 from collections.abc import Container
 from contextlib import closing
 from dataclasses import dataclass
@@ -248,34 +252,24 @@ def main() -> None:
     if not shared_password or not shared_password.strip():
         logger.error("Set SCHEDULED_INSPECTION_DAHAU_PASSWORD before starting the worker.")
         raise SystemExit(1)
-    from holidays import country_holidays
+    from app.review_schedules import ReviewScheduler
+    from app.snapshot_analysis import AnalysisWorker, QueueSettings
 
-    public_holidays = country_holidays("HK", observed=True)
-    snapshot_dir = recorder_settings.snapshot_dir
-    analyze = os.environ.get("SCHEDULED_INSPECTION_ANALYZE", "").lower() == "true"
-    with closing(connect(DatabaseSettings())) as lock_connection, closing(lock_connection.cursor()) as cursor:
-        lock = cursor.execute(
-            "SET NOCOUNT ON; DECLARE @result int; EXEC @result = sp_getapplock "
-            "@Resource='cctv_scheduled_inspection', @LockMode='Exclusive', "
-            "@LockOwner='Session', @LockTimeout=0; SELECT @result"
-        ).fetchone()[0]
-        if lock < 0:
-            raise RuntimeError("Another scheduled inspection worker holds the database lock.")
-        previous = datetime.now(HONG_KONG)
-        _mark_missed_and_interrupted(previous, public_holidays)
-        logger.info("Scheduled DAHAU snapshot worker is ready (09:30 Hong Kong time on working days).")
+    settings = QueueSettings()
+    if not settings.worker_enabled:
+        logger.info("Snapshot analysis and review scheduling are disabled.")
+        return
+    scheduler = ReviewScheduler(recorder_settings.snapshot_dir)
+    worker = AnalysisWorker(recorder_settings.snapshot_dir, settings.concurrency)
+    logger.info("Using frontend-managed review schedules; the legacy fixed daily trigger and mode are no longer used.")
+    worker.start()
+    scheduler.start()
+    try:
         while True:
-            clock.sleep(10)
-            now = datetime.now(HONG_KONG)
-            scheduled = datetime.combine(now.date(), RUN_TIME, tzinfo=HONG_KONG)
-            if previous < scheduled <= now:
-                if _is_run_day(now.date(), public_holidays) and now - scheduled <= timedelta(seconds=30):
-                    _run(now.date(), snapshot_dir, shared_password, analyze)
-                    now = datetime.now(HONG_KONG)
-                _mark_missed_and_interrupted(now, public_holidays)
-            elif now.date() != previous.date():
-                _mark_missed_and_interrupted(now, public_holidays)
-            previous = now
+            clock.sleep(60)
+    finally:
+        scheduler.stop()
+        worker.stop()
 
 
 if __name__ == "__main__":

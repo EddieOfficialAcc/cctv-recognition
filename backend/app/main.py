@@ -16,6 +16,8 @@ from app.snapshot_batches import router as snapshot_batches_router
 from app.snapshot_analysis import AnalysisWorker, QueueError, QueueSettings
 from app.snapshot_analysis_api import router as snapshot_analysis_router
 from app.recorder import RecorderSettings
+from app.review_schedules import ReviewScheduler
+from app.review_schedule_api import router as review_schedule_router
 
 logger = logging.getLogger(__name__)
 
@@ -31,16 +33,21 @@ class DatabaseHealthResponse(HealthResponse):
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     worker = None
+    scheduler = None
     try:
         settings = QueueSettings()
         if settings.worker_enabled:
             worker = AnalysisWorker(RecorderSettings().snapshot_dir, settings.concurrency)
             worker.start()
+            scheduler = ReviewScheduler(RecorderSettings().snapshot_dir)
+            scheduler.start()
     except (QueueError, ValidationError) as error:
-        logger.error("AI review worker could not start (%s). Check archive/configuration.", type(error).__name__)
+        logger.error("AI review or schedule worker could not start (%s). Check archive/configuration.", type(error).__name__)
     try:
         yield
     finally:
+        if scheduler is not None:
+            scheduler.stop()
         if worker is not None:
             worker.stop()
 
@@ -52,6 +59,7 @@ app.include_router(inspection_reports_router)
 app.include_router(recognition_router)
 app.include_router(snapshot_batches_router)
 app.include_router(snapshot_analysis_router)
+app.include_router(review_schedule_router)
 
 
 @app.get("/api/health", response_model=HealthResponse, tags=["health"])

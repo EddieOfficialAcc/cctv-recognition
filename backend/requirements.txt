@@ -5,3 +5,4 @@ pydantic-settings>=2.6,<3.0
 python-multipart>=0.0.20,<1.0
 Pillow>=11.0,<13.0
 holidays>=0.86,<1.0
+croniter>=6.0,<7.0

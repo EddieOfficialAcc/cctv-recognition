@@ -29,10 +29,12 @@ export function InspectionProgress({ run, manual, onViewReport }: {
   </div>
 }
 
-export function InspectionReports({ onSelect }: { onSelect: (record: RecognitionRecord) => void }) {
+export function InspectionReports({ onSelect, initialBatch }: {
+  onSelect: (record: RecognitionRecord) => void; initialBatch?: string
+}) {
   const { t, formatDate, errorMessage } = useLocale()
   const [runs, setRuns] = useState<InspectionRun[]>([])
-  const [selected, setSelected] = useState('')
+  const [selected, setSelected] = useState(initialBatch ?? '')
   const [page, setPage] = useState(1)
   const [items, setItems] = useState<InspectionItemPage | null>(null)
   const [refresh, setRefresh] = useState(0)
@@ -40,7 +42,7 @@ export function InspectionReports({ onSelect }: { onSelect: (record: Recognition
   const [error, setError] = useState<Error | null>(null)
   const [recordError, setRecordError] = useState(false)
   const [preview, setPreview] = useState<{ url: string; name: string; filename: string } | null>(null)
-  const [manual, setManual] = useState(false)
+  const [manual, setManual] = useState(Boolean(initialBatch))
   const [starting, setStarting] = useState(false)
   const [startError, setStartError] = useState<Error | null>(null)
   const [confirmBatch, setConfirmBatch] = useState(false)
@@ -159,7 +161,7 @@ export function InspectionReports({ onSelect }: { onSelect: (record: Recognition
         onChange={event => { setSelected(event.target.value); setItems(null); setPage(1); setError(null) }}>
         {!runs.length && <option value="">{t(loading ? 'loadingTitle' : 'reportChooseRun')}</option>}
         {runs.map(entry => <option key={runKey(entry)} value={runKey(entry)}>
-          {manual ? `${formatDate(entry.started_at, true)} · ${entry.id?.slice(0, 8)}` : entry.run_date}
+          {manual ? `${entry.schedule_name ? `${entry.schedule_name} · ` : ''}${formatDate(entry.started_at, true)} · ${entry.id?.slice(0, 8)}` : entry.run_date}
         </option>)}
       </select></label>
       {run && <span className="badge">{t(statusKeys[run.status] ?? 'runUnknown')}</span>}

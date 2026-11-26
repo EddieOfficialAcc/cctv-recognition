@@ -5,7 +5,7 @@ export type ReviewStatus = 'new' | 'acknowledged' | 'false_positive'
 export type Outcome = 'flagged' | 'needs_review'
 export type Region = 'Hong Kong' | 'Macau'
 
-export type ErrorCode = 'aiConfigurationError' | 'aiStorageError' | 'batchExclusionAmbiguous' | 'batchAlreadyRunning' | 'batchNoRecorders' | 'snapshotConfigurationError' | 'requestError' | 'storageError' | 'analysisError' | 'validationError' | 'notFoundError' |
+export type ErrorCode = 'scheduleConflictError' | 'scheduleValidationError' | 'aiConfigurationError' | 'aiStorageError' | 'batchExclusionAmbiguous' | 'batchAlreadyRunning' | 'batchNoRecorders' | 'snapshotConfigurationError' | 'requestError' | 'storageError' | 'analysisError' | 'validationError' | 'notFoundError' |
   'responseError' | 'fileTypeError' | 'fileSizeError' | 'imageCorruptError' | 'resolutionError' | 'animatedError'
 
 export class ApiError extends Error {
@@ -78,6 +78,7 @@ export interface InspectionRun {
   id?: string
   error?: string
   analysis_error?: string
+  schedule_name?: string
   run_date: string
   status: string
   started_at: string | null
@@ -173,6 +174,7 @@ function isCameraConfigurationPage(value: unknown): value is CameraConfiguration
 function isInspectionRun(value: unknown): value is InspectionRun {
   return isObject(value) && typeof value.run_date === 'string' && typeof value.status === 'string' &&
     (value.error === undefined || typeof value.error === 'string') &&
+    (value.schedule_name === undefined || typeof value.schedule_name === 'string') &&
     ['started_at', 'finished_at'].every(key => value[key] === null || typeof value[key] === 'string') &&
     ['total', 'completed', 'failed', 'skipped', 'interrupted', 'saved'].every(key => typeof value[key] === 'number')
 }
@@ -224,6 +226,10 @@ async function request<T>(
     if (message === 'A manual snapshot batch is already running.') code = 'batchAlreadyRunning'
     if (message === 'No DAHAU recorders are configured for batch capture.') code = 'batchNoRecorders'
     if (message === 'A unique current recorder configuration is required to exclude this channel.') code = 'batchExclusionAmbiguous'
+    if (url.startsWith('/api/review-schedules')) {
+      if (response.status === 409) code = 'scheduleConflictError'
+      if (response.status === 422) code = 'scheduleValidationError'
+    }
     if (response.status === 422) {
       if (message.includes('supported')) code = 'fileTypeError'
       else if (message.includes('10 MB')) code = 'fileSizeError'
@@ -361,6 +367,87 @@ export const analysisSource = (id: string, manual: boolean) =>
 
 export function fetchAnalysisSettings(signal: AbortSignal) {
   return request('/api/snapshot-analysis/settings', isAnalysisSettings, { signal, cache: 'no-store' })
+}
+
+export interface ReviewScheduleInput {
+  name: string
+  enabled: boolean
+  cron: string
+  skip_holidays: boolean
+}
+
+export interface ReviewSchedule extends ReviewScheduleInput {
+  id: string
+  revision: number
+  next_run: string | null
+}
+
+export interface ReviewOccurrence {
+  id: string
+  schedule_id: string
+  schedule_name: string
+  scheduled_at: string
+  finished_at: string | null
+  batch_id: string
+  status: 'running' | 'completed' | 'interrupted' | 'failed' | 'skipped' | 'missed'
+  message: string
+  has_report: boolean
+}
+
+export interface ReviewSchedulePage {
+  schedules: ReviewSchedule[]
+  history: ReviewOccurrence[]
+  scheduler_online: boolean
+  timezone: 'Asia/Hong_Kong'
+}
+
+function isDate(value: unknown): value is string {
+  return typeof value === 'string' && Number.isFinite(Date.parse(value))
+}
+
+function isReviewSchedule(value: unknown): value is ReviewSchedule {
+  return isObject(value) && ['id', 'name', 'cron'].every(key => typeof value[key] === 'string') &&
+    typeof value.enabled === 'boolean' && typeof value.skip_holidays === 'boolean' &&
+    typeof value.revision === 'number' && Number.isInteger(value.revision) && value.revision >= 1 &&
+    (value.next_run === null || isDate(value.next_run)) && (!value.enabled || isDate(value.next_run))
+}
+
+function isReviewSchedulePage(value: unknown): value is ReviewSchedulePage {
+  return isObject(value) && typeof value.scheduler_online === 'boolean' && value.timezone === 'Asia/Hong_Kong' &&
+    Array.isArray(value.schedules) && value.schedules.every(isReviewSchedule) &&
+    Array.isArray(value.history) && value.history.every(row => isObject(row) &&
+      ['id', 'schedule_id', 'schedule_name', 'batch_id', 'message'].every(key => typeof row[key] === 'string') &&
+      typeof row.has_report === 'boolean' && isDate(row.scheduled_at) &&
+      (row.finished_at === null || isDate(row.finished_at)) &&
+      ['running', 'completed', 'interrupted', 'failed', 'skipped', 'missed'].includes(String(row.status)))
+}
+
+const scheduleHeaders = { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }
+
+export function fetchReviewSchedules(signal: AbortSignal) {
+  return request('/api/review-schedules', isReviewSchedulePage, { signal, cache: 'no-store' })
+}
+
+export function saveReviewSchedule(selection: ReviewScheduleInput, existing?: ReviewSchedule) {
+  const body = { name: selection.name, enabled: selection.enabled, cron: selection.cron,
+    skip_holidays: selection.skip_holidays, ...(existing ? { revision: existing.revision } : {}) }
+  return request(`/api/review-schedules${existing ? `/${encodeURIComponent(existing.id)}` : ''}`, isReviewSchedule, {
+    method: existing ? 'PUT' : 'POST', headers: scheduleHeaders, body: JSON.stringify(body),
+  })
+}
+
+export function previewReviewSchedule(selection: ReviewScheduleInput) {
+  return request('/api/review-schedules/preview', (value): value is { next_runs: string[] } =>
+    isObject(value) && Array.isArray(value.next_runs) && value.next_runs.length === 3 && value.next_runs.every(isDate), {
+    method: 'POST', headers: scheduleHeaders, body: JSON.stringify(selection),
+  })
+}
+
+export function deleteReviewSchedule(schedule: ReviewSchedule) {
+  return request(`/api/review-schedules/${encodeURIComponent(schedule.id)}?revision=${schedule.revision}`,
+    (value): value is { deleted: true } => isObject(value) && value.deleted === true, {
+      method: 'DELETE', headers: scheduleHeaders,
+    })
 }
 
 export function setAutoAnalysis(auto_analyze: boolean) {

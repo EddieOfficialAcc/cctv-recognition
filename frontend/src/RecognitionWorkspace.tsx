@@ -34,6 +34,7 @@ export function RecognitionWorkspace({ apiStatus, onLogout }: { apiStatus: strin
   const [notice, setNotice] = useState<RecognitionRecord | null>(null)
   const [logoutError, setLogoutError] = useState(false)
   const [view, setView] = useState<keyof typeof viewLabels>('records')
+  const [reportBatch, setReportBatch] = useState<string | undefined>()
   const [smallScreen, setSmallScreen] = useState(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 640px)').matches)
   const [sidebarPreference, setSidebarPreference] = useState<boolean | null>(null)
   const sidebarVisible = sidebarPreference ?? !smallScreen
@@ -177,8 +178,8 @@ export function RecognitionWorkspace({ apiStatus, onLogout }: { apiStatus: strin
       </header>
       <main id="main-content">
         {logoutError && <div className="error-message language-warning" role="alert">{t('loginLogoutError')}</div>}
-        {view === 'configuration' ? <CameraConfiguration /> : view === 'reports' ? <InspectionReports onSelect={setSelected} /> :
-          view === 'worker' ? <SnapshotWorker onOpenReports={() => setView('reports')} /> : <>
+        {view === 'configuration' ? <CameraConfiguration /> : view === 'reports' ? <InspectionReports onSelect={setSelected} initialBatch={reportBatch} /> :
+          view === 'worker' ? <SnapshotWorker onOpenReports={batch => { setReportBatch(batch); setView('reports') }} /> : <>
         <div className="page-heading">
           <div><p className="eyebrow">{t('qualityAssurance')}</p><h1>{t('recognitionRecords')}</h1>
             <p className="page-description">{t('pageDescription')}</p>
