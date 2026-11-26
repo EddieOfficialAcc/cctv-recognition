@@ -49,6 +49,8 @@ class Item(BaseModel):
     captured_at: datetime | None
     has_evidence: bool
     has_record: bool
+    excluded: bool = False
+    can_exclude: bool = False
 
 
 class ItemPage(BaseModel):

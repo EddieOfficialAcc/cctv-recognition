@@ -36,6 +36,10 @@ class RecorderAuthenticationError(RecorderError):
     pass
 
 
+class RecorderChannelNotFoundError(RecorderError):
+    pass
+
+
 class RejectRedirects(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         raise HTTPError(req.full_url, code, "Redirect refused", headers, fp)
@@ -80,6 +84,8 @@ class Recorder:
         except HTTPError as error:
             if error.code == 401:
                 raise RecorderAuthenticationError("Recorder authentication failed or digest is unsupported.") from None
+            if error.code == 404:
+                raise RecorderChannelNotFoundError("Recorder returned HTTP 404.") from None
             raise RecorderError(f"Recorder returned HTTP {error.code}.") from None
         except (URLError, OSError, ValueError):
             raise RecorderError("Recorder request failed or timed out.") from None

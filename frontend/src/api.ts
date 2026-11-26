@@ -1,9 +1,11 @@
+import type { MessageKey } from './messages'
+
 export type CheckStatus = 'pass' | 'flagged' | 'not_assessed'
 export type ReviewStatus = 'new' | 'acknowledged' | 'false_positive'
 export type Outcome = 'flagged' | 'needs_review'
 export type Region = 'Hong Kong' | 'Macau'
 
-export type ErrorCode = 'batchAlreadyRunning' | 'batchNoRecorders' | 'snapshotConfigurationError' | 'requestError' | 'storageError' | 'analysisError' | 'validationError' | 'notFoundError' |
+export type ErrorCode = 'batchExclusionAmbiguous' | 'batchAlreadyRunning' | 'batchNoRecorders' | 'snapshotConfigurationError' | 'requestError' | 'storageError' | 'analysisError' | 'validationError' | 'notFoundError' |
   'responseError' | 'fileTypeError' | 'fileSizeError' | 'imageCorruptError' | 'resolutionError' | 'animatedError'
 
 export class ApiError extends Error {
@@ -99,6 +101,8 @@ export interface InspectionItem {
   captured_at: string | null
   has_evidence: boolean
   has_record: boolean
+  excluded?: boolean
+  can_exclude?: boolean
 }
 
 export interface InspectionItemPage {
@@ -106,6 +110,21 @@ export interface InspectionItemPage {
   total: number
   page: number
   page_size: number
+}
+
+export interface SnapshotBatchReport {
+  id: string
+  status: string
+  started_at: string
+  finished_at: string | null
+  error?: string
+  items: InspectionItem[]
+}
+
+export const inspectionStatusKeys: Record<string, MessageKey> = {
+  running: 'runRunning', completed: 'runCompleted', interrupted: 'runInterrupted', missed: 'runMissed',
+  pending: 'runPending', captured: 'runCaptured', failed: 'runFailed', skipped: 'runSkipped',
+  capturing: 'runCapturing',
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -160,13 +179,24 @@ function isSnapshotBatch(value: unknown): value is InspectionRun & { id: string 
   return isInspectionRun(value) && typeof value.id === 'string'
 }
 
+function isInspectionItem(value: unknown): value is InspectionItem {
+  return isObject(value) && ['id', 'shop_code', 'camera_name', 'region', 'status', 'coverage_method', 'message']
+    .every(key => typeof value[key] === 'string') &&
+    typeof value.channel === 'number' && (value.captured_at === null || typeof value.captured_at === 'string') &&
+    typeof value.has_evidence === 'boolean' && typeof value.has_record === 'boolean' &&
+    ['excluded', 'can_exclude'].every(key => value[key] === undefined || typeof value[key] === 'boolean')
+}
+
 function isInspectionItemPage(value: unknown): value is InspectionItemPage {
   return isObject(value) && ['total', 'page', 'page_size'].every(key => typeof value[key] === 'number') &&
-    Array.isArray(value.items) && value.items.every(item =>
-      isObject(item) && ['id', 'shop_code', 'camera_name', 'region', 'status', 'coverage_method', 'message']
-        .every(key => typeof item[key] === 'string') &&
-      typeof item.channel === 'number' && (item.captured_at === null || typeof item.captured_at === 'string') &&
-      typeof item.has_evidence === 'boolean' && typeof item.has_record === 'boolean')
+    Array.isArray(value.items) && value.items.every(isInspectionItem)
+}
+
+function isSnapshotBatchReport(value: unknown): value is SnapshotBatchReport {
+  return isObject(value) && ['id', 'status', 'started_at'].every(key => typeof value[key] === 'string') &&
+    (value.finished_at === null || typeof value.finished_at === 'string') &&
+    (value.error === undefined || typeof value.error === 'string') &&
+    Array.isArray(value.items) && value.items.every(isInspectionItem)
 }
 
 async function request<T>(
@@ -189,6 +219,7 @@ async function request<T>(
     if (message === 'Manual snapshot capture is not configured.') code = 'snapshotConfigurationError'
     if (message === 'A manual snapshot batch is already running.') code = 'batchAlreadyRunning'
     if (message === 'No DAHAU recorders are configured for batch capture.') code = 'batchNoRecorders'
+    if (message === 'A unique current recorder configuration is required to exclude this channel.') code = 'batchExclusionAmbiguous'
     if (response.status === 422) {
       if (message.includes('supported')) code = 'fileTypeError'
       else if (message.includes('10 MB')) code = 'fileSizeError'
@@ -251,10 +282,24 @@ export async function captureCameraSnapshot(shop_code: string, region: string, c
   return image
 }
 
-export function startSnapshotBatch() {
-  return request('/api/snapshot-batches', isSnapshotBatch, {
+export function startSnapshotBatch(recheckSkipped = false) {
+  return request(`/api/snapshot-batches?recheck_skipped=${recheckSkipped}`, isSnapshotBatch, {
     method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' },
   })
+}
+
+export function fetchSnapshotBatchReport(id: string, signal: AbortSignal) {
+  return request(`/api/snapshot-batches/${encodeURIComponent(id)}/report`,
+    (value): value is SnapshotBatchReport => isSnapshotBatchReport(value) && value.id === id,
+    { signal, cache: 'no-store' })
+}
+
+export function setSnapshotChannelExcluded(batch: string, item: string, skip: boolean) {
+  return request(`/api/snapshot-batches/${encodeURIComponent(batch)}/items/${encodeURIComponent(item)}/exclusion`,
+    (value): value is { skip: boolean } => isObject(value) && typeof value.skip === 'boolean', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+      body: JSON.stringify({ skip }),
+    })
 }
 
 export function fetchInspectionRuns(signal: AbortSignal, manual = false) {

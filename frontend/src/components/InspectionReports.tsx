@@ -1,21 +1,18 @@
 import { useEffect, useState } from 'react'
-import { fetchInspectionItems, fetchInspectionRuns, fetchRecord, startSnapshotBatch, type InspectionItemPage, type InspectionRun, type RecognitionRecord } from '../api'
+import { fetchInspectionItems, fetchInspectionRuns, fetchRecord, inspectionStatusKeys as statusKeys, setSnapshotChannelExcluded, startSnapshotBatch, type InspectionItem, type InspectionItemPage, type InspectionRun, type RecognitionRecord } from '../api'
 import { useLocale } from '../localization'
-import type { MessageKey } from '../messages'
 import { Icon } from './Icon'
 import { Dialog } from './Dialog'
 import { EvidenceImage } from './EvidenceImage'
-
-const statusKeys: Record<string, MessageKey> = {
-  running: 'runRunning', completed: 'runCompleted', interrupted: 'runInterrupted', missed: 'runMissed',
-  pending: 'runPending', captured: 'runCaptured', failed: 'runFailed', skipped: 'runSkipped',
-  capturing: 'runCapturing',
-}
+import { SnapshotBatchReportDialog } from './SnapshotBatchReportDialog'
 
 const runKey = (run: InspectionRun) => run.id ?? run.run_date
 
-export function InspectionProgress({ run, manual }: { run: InspectionRun; manual: boolean }) {
+export function InspectionProgress({ run, manual, onViewReport }: {
+  run: InspectionRun; manual: boolean; onViewReport?: (id: string) => void
+}) {
   const { t } = useLocale()
+  const id = run.id
   const processed = run.completed + run.failed + run.skipped
   return <div className="worker-panel-body">
     <label>{t('captureProgress', { done: processed, total: run.total })}
@@ -23,8 +20,11 @@ export function InspectionProgress({ run, manual }: { run: InspectionRun; manual
     </label>
     <p role="status">{t('captureSaved', { count: run.saved })}</p>
     {run.error && <p className="error-message" role="alert">{t('batchFailureDetail', { reason: run.error })}</p>}
-    {manual && run.id && <a className="text-button" href={`/api/snapshot-batches/${run.id}/report`}
-      download={`snapshot-batch-${run.id}.json`}>{t('batchDownloadReport')}</a>}
+    {manual && id && <div className="configuration-actions">
+      {onViewReport && <button className="text-button" onClick={() => onViewReport(id)}>{t('batchViewReport')}</button>}
+      <a className="text-button" href={`/api/snapshot-batches/${id}/report`}
+        download={`snapshot-batch-${id}.json`}>{t('batchDownloadReport')}</a>
+    </div>}
     <p className="field-hint">{t('captureProgressHint')}</p>
   </div>
 }
@@ -44,6 +44,11 @@ export function InspectionReports({ onSelect }: { onSelect: (record: Recognition
   const [starting, setStarting] = useState(false)
   const [startError, setStartError] = useState<Error | null>(null)
   const [confirmBatch, setConfirmBatch] = useState(false)
+  const [recheckSkipped, setRecheckSkipped] = useState(false)
+  const [exclusionBusy, setExclusionBusy] = useState<string | null>(null)
+  const [exclusionError, setExclusionError] = useState<Error | null>(null)
+  const [exclusionSaved, setExclusionSaved] = useState(false)
+  const [viewReport, setViewReport] = useState<string | null>(null)
   const run = runs.find(entry => runKey(entry) === selected)
   const itemRevision = run ? `${run.status}:${run.completed}:${run.failed}:${run.skipped}:${run.interrupted}:${run.saved}` : ''
 
@@ -90,7 +95,8 @@ export function InspectionReports({ onSelect }: { onSelect: (record: Recognition
   async function captureAll() {
     setConfirmBatch(false); setStarting(true); setStartError(null)
     try {
-      const batch = await startSnapshotBatch()
+      const batch = await startSnapshotBatch(recheckSkipped)
+      setRecheckSkipped(false)
       setManual(true); setRuns([batch]); setSelected(batch.id); setItems(null); setPage(1)
       setError(null); setRefresh(value => value + 1)
     } catch (cause) {
@@ -98,6 +104,21 @@ export function InspectionReports({ onSelect }: { onSelect: (record: Recognition
       setStartError(cause instanceof Error ? cause : new Error(String(cause)))
     } finally {
       setStarting(false)
+    }
+  }
+
+  async function toggleExclusion(item: InspectionItem) {
+    setExclusionBusy(item.id); setExclusionError(null); setExclusionSaved(false)
+    try {
+      const result = await setSnapshotChannelExcluded(selected, item.id, !item.excluded)
+      setItems(current => current ? { ...current, items: current.items.map(entry =>
+        entry.id === item.id ? { ...entry, excluded: result.skip } : entry) } : current)
+      setExclusionSaved(true)
+    } catch (cause) {
+      console.error('Channel exclusion update failed:', cause)
+      setExclusionError(cause instanceof Error ? cause : new Error(String(cause)))
+    } finally {
+      setExclusionBusy(null)
     }
   }
 
@@ -112,6 +133,7 @@ export function InspectionReports({ onSelect }: { onSelect: (record: Recognition
       </div>
     </div>
     <p className="field-hint">{t('batchArchiveHint')}</p>
+    <p className="field-hint">{t('batchSkipHint')}</p>
     <div className="filter-bar"><label>{t('batchRunType')} <select value={manual ? 'manual' : 'scheduled'}
       onChange={event => {
         setManual(event.target.value === 'manual'); setSelected(''); setItems(null); setRuns([])
@@ -121,7 +143,9 @@ export function InspectionReports({ onSelect }: { onSelect: (record: Recognition
       <option value="manual">{t('batchManualRuns')}</option>
     </select></label></div>
     {startError && <div className="error-message" role="alert">{errorMessage(startError)}</div>}
-    {run && <InspectionProgress run={run} manual={manual} />}
+    {exclusionError && <div className="error-message" role="alert">{errorMessage(exclusionError)}</div>}
+    {exclusionSaved && <p role="status">{t('batchExclusionSaved')}</p>}
+    {run && <InspectionProgress run={run} manual={manual} onViewReport={setViewReport} />}
     {error && <div className="error-message" role="alert">{errorMessage(error)}</div>}
     {recordError && <div className="error-message" role="alert">{t('reportRecordError')}</div>}
     <section className="records-panel" aria-label={t('inspectionReports')}>
@@ -146,8 +170,11 @@ export function InspectionReports({ onSelect }: { onSelect: (record: Recognition
             <td>{t(statusKeys[item.status] ?? 'runUnknown')}</td><td>{formatDate(item.captured_at, true)}</td>
             <td>{item.coverage_method === 'recorder_titles' ? t('coverageTitles') :
               item.coverage_method === 'count_fallback' ? t('coverageFallback') :
-              item.coverage_method === 'configured_count' ? t('coverageConfiguredCount') : t('coverageNone')}
+              item.coverage_method === 'configured_count' ? t('coverageConfiguredCount') :
+              item.coverage_method === 'excluded' ? t('coverageExcluded') : t('coverageNone')}
               {item.message && <span className="cell-subtitle">{item.message}</span>}</td><td>
+              {manual && item.can_exclude && <button className="text-button" disabled={exclusionBusy !== null || run.status === 'running'}
+                onClick={() => { void toggleExclusion(item) }}>{t(item.excluded ? 'batchEnableChannel' : 'batchSkipChannel')}</button>}
               {item.has_evidence && <button className="text-button" onClick={() => setPreview({
                 url: manual ? `/api/snapshot-batches/${selected}/items/${item.id}/evidence` : `/api/inspection-runs/items/${item.id}/evidence`,
                 name: `${item.shop_code} · ${item.camera_name}`,
@@ -175,9 +202,13 @@ export function InspectionReports({ onSelect }: { onSelect: (record: Recognition
             onClick={() => { setItems(null); setPage(value => value + 1) }}><Icon name="chevron" size={16} /></button>
         </div></footer>}
     </section>
+    {viewReport && <SnapshotBatchReportDialog key={viewReport} id={viewReport} onClose={() => setViewReport(null)} />}
     {confirmBatch && <Dialog title={t('batchCaptureAll')} subtitle={t('batchConfirm')} onClose={() => setConfirmBatch(false)}>
       <div className="dialog-body" id="dialog-description">
         <p>{t('batchArchiveHint')}</p>
+        <p>{t('batchSkipHint')}</p>
+        <label><input type="checkbox" checked={recheckSkipped} onChange={event => setRecheckSkipped(event.target.checked)} />
+          {t('batchRecheckSkipped')}</label>
         <button className="button primary" onClick={() => { void captureAll() }}>{t('batchCaptureAll')}</button>
       </div>
     </Dialog>}

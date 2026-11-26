@@ -3,7 +3,6 @@ from collections.abc import Container
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
-import hashlib
 import logging
 import os
 from pathlib import Path
@@ -14,10 +13,14 @@ import pyodbc
 from pydantic import ValidationError
 
 from app.database import DatabaseSettings, connect
+from app.channel_exclusions import ChannelExclusions, exclusion_message, recorder_key
 from app.inspection import InvalidScreenshot, analyze_screenshot, prepare_screenshot
 from app.recognition_models import RecognitionRecord
 from app import recognition_repository
-from app.recorder import MAX_CHANNELS, Recorder, RecorderAuthenticationError, RecorderError, RecorderSettings
+from app.recorder import (
+    MAX_CHANNELS, Recorder, RecorderAuthenticationError, RecorderChannelNotFoundError,
+    RecorderError, RecorderSettings,
+)
 from app.snapshot_storage import DEFAULT_SNAPSHOT_DIR, SnapshotStorageError, save_snapshot
 from app.vision_analysis import AnalysisError, VisionSettings
 
@@ -67,7 +70,7 @@ def _add_item(run_date: date, recorder_index: int, shop: str, region: str, chann
 
 
 def _recorder_identifier(shop: str, region: str, address: str) -> str:
-    fingerprint = hashlib.sha256(f"{region}\0{shop}\0{address}".encode("utf-8")).digest()
+    fingerprint = bytes.fromhex(recorder_key(shop, region, address))
     with closing(connect(DatabaseSettings())) as connection, closing(connection.cursor()) as cursor:
         row = cursor.execute(
             "SELECT id FROM dbo.inspection_recorder_identities WHERE fingerprint=?", pyodbc.Binary(fingerprint),
@@ -85,7 +88,9 @@ def _recorder_identifier(shop: str, region: str, address: str) -> str:
 def _process_recorder(run_date: date, recorder_index: int, row,
                       seen_recorders: set[tuple[str, str, str]], snapshot_dir: Path,
                       shared_password: str, analyze: bool, plan: "CapturePlan | None" = None) -> None:
-    plan = plan or _prepare_recorder(run_date, recorder_index, row, seen_recorders, shared_password)
+    plan = plan or _prepare_recorder(
+        run_date, recorder_index, row, seen_recorders, shared_password, ChannelExclusions(snapshot_dir),
+    )
     if plan is None:
         return
     recorder, recorder_id, shop, region, items = plan.recorder, plan.recorder_id, plan.shop, plan.region, plan.items
@@ -102,7 +107,8 @@ class CapturePlan:
 
 
 def _prepare_recorder(run_date: date, recorder_index: int, row,
-                      seen_recorders: set[tuple[str, str, str]], shared_password: str) -> CapturePlan | None:
+                      seen_recorders: set[tuple[str, str, str]], shared_password: str,
+                      exclusions: ChannelExclusions | None = None) -> CapturePlan | None:
     shop, region, ip, quantity = row
     shop = (shop or "").strip()
     region = (region or "").strip()
@@ -112,25 +118,29 @@ def _prepare_recorder(run_date: date, recorder_index: int, row,
         if not isinstance(quantity, int) or not 1 <= quantity <= MAX_CHANNELS:
             raise RecorderError(f"Configured camera count must be between 1 and {MAX_CHANNELS}.")
         recorder = Recorder(ip, "admin", shared_password)
-        recorder_key = (shop, region, recorder.base)
-        if recorder_key in seen_recorders:
+        configuration_key = (shop, region, recorder.base)
+        if configuration_key in seen_recorders:
             raise RecorderError("Duplicate recorder configuration for this shop and address.")
-        seen_recorders.add(recorder_key)
+        seen_recorders.add(configuration_key)
     except RecorderError as error:
         _add_item(run_date, recorder_index, shop[:50], region[:20],
                   0, "", "skipped", "none", str(error))
         return None
 
     recorder_id = _recorder_identifier(shop, region, recorder.base)
+    excluded = exclusions.get(recorder_key(shop, region, recorder.base)) if exclusions is not None else {}
     items = []
     for channel in range(1, quantity + 1):
         name = f"Channel {channel}"
         identity = f"{name} [{recorder_id}]"
         item_id = _add_item(
             run_date, recorder_index, shop, region, channel, name,
-            "pending", "configured_count", "",
+            "skipped" if channel in excluded else "pending",
+            "excluded" if channel in excluded else "configured_count",
+            exclusion_message(excluded[channel]) if channel in excluded else "",
         )
-        items.append((channel, identity, item_id))
+        if channel not in excluded:
+            items.append((channel, identity, item_id))
     return CapturePlan(recorder, recorder_id, shop, region, items)
 
 
@@ -138,6 +148,9 @@ def _capture_channels(recorder: Recorder, recorder_id: str, shop: str, region: s
                       items: list[tuple[int, str, UUID]], run_date: date, snapshot_dir: Path,
                       analyze: bool) -> None:
     authentication_failed = False
+    exclusions = ChannelExclusions(snapshot_dir)
+    present: set[int] = set()
+    not_found: set[int] = set()
     for channel, name, item_id in items:
         if authentication_failed:
             _execute(
@@ -149,6 +162,7 @@ def _capture_channels(recorder: Recorder, recorder_id: str, shop: str, region: s
             image = recorder.snapshot(channel)
             captured_at = _utc_now()
             evidence = prepare_screenshot(image)
+            present.add(channel)
             save_snapshot(snapshot_dir, run_date, recorder_id, channel, evidence)
             _execute(
                 "UPDATE dbo.inspection_run_items SET status=?, captured_at=?, evidence=? WHERE id=?",
@@ -170,10 +184,13 @@ def _capture_channels(recorder: Recorder, recorder_id: str, shop: str, region: s
             _execute("UPDATE dbo.inspection_run_items SET status='completed' WHERE id=?", str(item_id))
         except (RecorderError, InvalidScreenshot, AnalysisError, SnapshotStorageError) as error:
             authentication_failed = isinstance(error, RecorderAuthenticationError)
+            if isinstance(error, RecorderChannelNotFoundError):
+                not_found.add(channel)
             _execute(
                 "UPDATE dbo.inspection_run_items SET status='failed', message=? WHERE id=?",
                 str(error)[:1000], str(item_id),
             )
+    exclusions.record_results(recorder_key(shop, region, recorder.base), present, not_found)
 
 
 def _mark_missed_and_interrupted(now: datetime, public_holidays: Container[date]) -> None:
@@ -206,7 +223,8 @@ def _run(today: date, snapshot_dir: Path, shared_password: str, analyze: bool) -
              today, _db_time(_utc_now()))
     rows = _eligible_recorders()
     seen_recorders: set[tuple[str, str, str]] = set()
-    plans = [(index, row, _prepare_recorder(today, index, row, seen_recorders, shared_password))
+    exclusions = ChannelExclusions(snapshot_dir)
+    plans = [(index, row, _prepare_recorder(today, index, row, seen_recorders, shared_password, exclusions))
              for index, row in enumerate(rows, 1)]
     for index, row, plan in plans:
         if plan is None:

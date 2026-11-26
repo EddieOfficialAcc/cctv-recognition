@@ -117,7 +117,7 @@ class ScheduledInspectionTest(unittest.TestCase):
                 set(), Path(folder), "test-only", False,
             )
 
-            archived = list(Path(folder).rglob("*.*"))
+            archived = list(Path(folder).rglob("*.jpeg"))
             self.assertEqual(archived, [Path(folder) / "2026-11-26" / recorder_id / "channel-002.jpeg"])
             with Image.open(archived[0]) as saved:
                 self.assertEqual((saved.format, saved.size), ("JPEG", (4, 3)))
@@ -148,7 +148,7 @@ class ScheduledInspectionTest(unittest.TestCase):
             recorder.snapshot.assert_called_once_with(1)
             self.assertIn("status='failed'", execute.call_args.args[0])
             self.assertIn("Not attempted", execute.call_args.args[1])
-            self.assertEqual(list(Path(folder).iterdir()), [])
+            self.assertEqual(list(Path(folder).rglob("*.jpeg")), [])
 
     def test_missed_runs_only_record_working_days_after_start_time(self) -> None:
         public_holidays = {date(2026, 12, 25)}

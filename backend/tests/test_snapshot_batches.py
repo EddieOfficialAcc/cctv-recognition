@@ -6,6 +6,8 @@ from tempfile import TemporaryDirectory
 from threading import Event
 import unittest
 from unittest.mock import MagicMock, call, patch
+from urllib.error import HTTPError
+from uuid import uuid4
 
 from fastapi import BackgroundTasks
 from fastapi.testclient import TestClient
@@ -13,8 +15,10 @@ from PIL import Image
 
 from app import snapshot_batches as batches
 from app.auth import require_user
+from app.channel_exclusions import ChannelExclusions, recorder_key
 from app.main import app
-from app.recorder import RecorderAuthenticationError, RecorderError, RecorderSettings
+from app.recorder import Recorder, RecorderAuthenticationError, RecorderChannelNotFoundError, RecorderError, RecorderSettings
+from app import scheduled_inspection as worker
 from app.snapshot_storage import SnapshotStorageError
 
 
@@ -235,6 +239,108 @@ class SnapshotBatchesTest(unittest.TestCase):
             self.assertEqual(client.post("/api/snapshot-batches").status_code, 503)
             self._acquire_lock.assert_not_called()
 
+    def test_user_exclusion_persists_skips_network_requests_and_can_be_reenabled(self) -> None:
+        with TestClient(app) as client, patch(
+            "app.snapshot_batches.Recorder.snapshot", return_value=self.image,
+        ) as snapshot:
+            batch_id = client.post("/api/snapshot-batches").json()["id"]
+            items = client.get(f"/api/snapshot-batches/{batch_id}/items").json()["items"]
+            channel = items[1]
+            url = f"/api/snapshot-batches/{batch_id}/items/{channel['id']}/exclusion"
+            self.assertEqual(client.patch(url, json={"skip": True}).status_code, 200)
+            # The next run opens the persisted store again, as a restarted backend would.
+            key = recorder_key("001", "Hong Kong", "http://192.0.2.1:81")
+            self.assertEqual(ChannelExclusions(self.root).get(key), {2: "user"})
+            snapshot.reset_mock()
+            next_id = client.post("/api/snapshot-batches").json()["id"]
+            next_items = client.get(f"/api/snapshot-batches/{next_id}/items").json()["items"]
+            self.assertEqual(snapshot.call_args_list, [call(1), call(3)])
+            self.assertEqual(next_items[1]["status"], "skipped")
+            self.assertTrue(next_items[1]["excluded"])
+            self.assertIn("excluded by a user", next_items[1]["message"])
+            self.assertEqual(client.patch(url, json={"skip": False}).status_code, 200)
+            snapshot.reset_mock()
+            client.post("/api/snapshot-batches")
+            self.assertEqual(snapshot.call_args_list, [call(1), call(2), call(3)])
+
+    def test_404_is_learned_only_on_working_recorder_and_recheck_rediscovers_channel(self) -> None:
+        with TestClient(app) as client, patch("app.snapshot_batches.Recorder.snapshot") as snapshot:
+            snapshot.side_effect = [self.image, RecorderChannelNotFoundError("Recorder returned HTTP 404."),
+                                    RecorderError("Recorder request failed or timed out.")]
+            client.post("/api/snapshot-batches")
+            key = recorder_key("001", "Hong Kong", "http://192.0.2.1:81")
+            self.assertEqual(ChannelExclusions(self.root).get(key), {2: "not_found"})
+            snapshot.reset_mock()
+            snapshot.side_effect = None
+            snapshot.return_value = self.image
+            client.post("/api/snapshot-batches")
+            self.assertEqual(snapshot.call_args_list, [call(1), call(3)])
+            snapshot.reset_mock()
+            client.post("/api/snapshot-batches?recheck_skipped=true")
+            self.assertEqual(snapshot.call_args_list, [call(1), call(2), call(3)])
+            self.assertEqual(ChannelExclusions(self.root).get(key), {})
+            ChannelExclusions(self.root).set_skipped(key, 2, True)
+            snapshot.reset_mock()
+            client.post("/api/snapshot-batches?recheck_skipped=true")
+            self.assertEqual(snapshot.call_args_list, [call(1), call(2), call(3)])
+            self.assertEqual(ChannelExclusions(self.root).get(key), {})
+
+    def test_unsupported_snapshot_endpoint_and_bad_requests_are_not_learned_as_missing(self) -> None:
+        key = recorder_key("001", "Hong Kong", "http://192.0.2.1:81")
+        with TestClient(app) as client, patch(
+            "app.snapshot_batches.Recorder.snapshot",
+            side_effect=RecorderChannelNotFoundError("Recorder returned HTTP 404."),
+        ):
+            client.post("/api/snapshot-batches")
+        self.assertEqual(ChannelExclusions(self.root).get(key), {})
+        with TestClient(app) as client, patch(
+            "app.snapshot_batches.Recorder.snapshot",
+            side_effect=[self.image, RecorderError("Recorder returned HTTP 400."), self.image],
+        ):
+            client.post("/api/snapshot-batches")
+        self.assertEqual(ChannelExclusions(self.root).get(key), {})
+
+    def test_legacy_report_exclusion_requires_unique_current_recorder_and_follows_ip_identity(self) -> None:
+        report, _ = batches._plan_batch("test-only")
+        report.recorder_keys = {}
+        report.status = "completed"
+        batches._write_report(self.root, report)
+        url = f"/api/snapshot-batches/{report.id}/items/{report.items[1].id}/exclusion"
+        with TestClient(app) as client:
+            self._eligible_recorders.return_value.append(("001", "Hong Kong", "192.0.2.2", 3))
+            self.assertEqual(client.patch(url, json={"skip": True}).status_code, 409)
+            self._eligible_recorders.return_value.pop()
+            self.assertEqual(client.patch(url, json={"skip": True}).status_code, 200)
+            self._eligible_recorders.return_value = [("001", "Hong Kong", "192.0.2.99", 3)]
+            with patch("app.snapshot_batches.Recorder.snapshot", return_value=self.image) as snapshot:
+                client.post("/api/snapshot-batches")
+            self.assertEqual(snapshot.call_args_list, [call(1), call(2), call(3)])
+
+    def test_scheduled_capture_respects_manual_exclusions_without_contacting_disabled_channel(self) -> None:
+        key = recorder_key("001", "Hong Kong", "http://192.0.2.1:81")
+        ChannelExclusions(self.root).set_skipped(key, 2, True)
+        report_date = batches._utc_now().date()
+        with patch("app.scheduled_inspection._recorder_identifier", return_value=str(uuid4())), patch(
+            "app.scheduled_inspection._execute",
+        ), patch("app.scheduled_inspection._add_item", side_effect=lambda *args: uuid4()) as add, patch(
+            "app.scheduled_inspection.Recorder.snapshot", return_value=self.image,
+        ) as snapshot:
+            worker._process_recorder(
+                report_date, 1, ("001", "Hong Kong", "192.0.2.1:81", 3),
+                set(), self.root, "test-only", False,
+            )
+        self.assertEqual(snapshot.call_args_list, [call(1), call(3)])
+        self.assertEqual(add.call_args_list[1].args[-3:-1], ("skipped", "excluded"))
+        self.assertTrue(all(args.args[0] == report_date for args in add.call_args_list))
+
+    def test_recorder_distinguishes_http_404_from_transient_errors(self) -> None:
+        recorder = Recorder("192.0.2.1", "admin", "test-only")
+        with patch.object(recorder.opener, "open", side_effect=HTTPError(
+            recorder.base, 404, "Not found", {}, None,
+        )):
+            with self.assertRaises(RecorderChannelNotFoundError):
+                recorder.snapshot(2)
+
     def test_start_releases_session_lock_after_planning_failure(self) -> None:
         self._eligible_recorders.side_effect = RuntimeError("Unexpected planning error")
         connection = self._acquire_lock.return_value
@@ -249,6 +355,11 @@ class SnapshotBatchesTest(unittest.TestCase):
             self.assertEqual(client.get("/api/snapshot-batches").status_code, 401)
             self.assertEqual(client.post("/api/snapshot-batches").status_code, 403)
             self.assertEqual(client.post("/api/snapshot-batches", headers={
+                "X-Requested-With": "XMLHttpRequest",
+            }).status_code, 401)
+            path = f"/api/snapshot-batches/{uuid4()}/items/{uuid4()}/exclusion"
+            self.assertEqual(client.patch(path, json={"skip": True}).status_code, 403)
+            self.assertEqual(client.patch(path, json={"skip": True}, headers={
                 "X-Requested-With": "XMLHttpRequest",
             }).status_code, 401)
         self._acquire_lock.assert_not_called()

@@ -167,6 +167,7 @@ tbody tr:last-child td { border-bottom: 0; }
 .spinner.large { width: 30px; height: 30px; color: #559f96; margin-bottom: 20px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .dialog { border: 1px solid #e1e7ee; border-radius: 14px; padding: 0; width: min(590px, calc(100vw - 32px)); max-height: calc(100dvh - 40px); background: white; color: #283c54; box-shadow: 0 24px 90px #0b203440; margin: auto; overflow-y: auto; }
+.dialog.dialog-wide { width: min(1120px, calc(100vw - 32px)); }
 .dialog::backdrop { background: #10203680; backdrop-filter: blur(3px); }
 .dialog-header { display: flex; align-items: center; justify-content: space-between; padding: 24px 26px; border-bottom: 1px solid #e8edf2; background: white; position: sticky; top: 0; z-index: 1; }
 .dialog-header h2 { font-size: 21px; letter-spacing: -.4px; overflow-wrap: anywhere; }

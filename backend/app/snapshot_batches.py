@@ -16,13 +16,17 @@ from uuid import UUID, uuid4
 import pyodbc
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.auth import require_user
+from app.channel_exclusions import ChannelExclusions, exclusion_message, recorder_key
 from app.database import DatabaseSettings, connect
 from app.inspection import InvalidScreenshot, prepare_screenshot
 from app.inspection_reports import Item, ItemPage, Run
-from app.recorder import MAX_CHANNELS, Recorder, RecorderAuthenticationError, RecorderError, RecorderSettings
+from app.recorder import (
+    MAX_CHANNELS, Recorder, RecorderAuthenticationError, RecorderChannelNotFoundError,
+    RecorderError, RecorderSettings, _address,
+)
 from app.scheduled_inspection import HONG_KONG, _eligible_recorders, _utc_now
 from app.snapshot_storage import SnapshotStorageError, save_snapshot
 
@@ -41,6 +45,8 @@ class BatchReport(BaseModel):
     finished_at: datetime | None = None
     error: str = ""
     items: list[Item]
+    recorder_keys: dict[int, str] = Field(default_factory=dict)
+    recheck_skipped: bool = False
 
     def summary(self) -> BatchRun:
         counts = {status: sum(item.status == status for item in self.items)
@@ -159,14 +165,18 @@ def storage_errors(response: Response):
         yield
 
 
-def _plan_batch(password: str) -> tuple[BatchReport, dict[int, Recorder]]:
-    report = BatchReport(id=uuid4(), started_at=_utc_now(), items=[])
+def _plan_batch(password: str, root: Path | None = None,
+                recheck_skipped: bool = False) -> tuple[BatchReport, dict[int, Recorder]]:
+    root = root if root is not None else RecorderSettings().snapshot_dir
+    exclusions = ChannelExclusions(root)
+    report = BatchReport(id=uuid4(), started_at=_utc_now(), items=[], recheck_skipped=recheck_skipped)
     recorders: dict[int, Recorder] = {}
     seen: set[tuple[str, str, str]] = set()
     for index, row in enumerate(_eligible_recorders(include_missing_addresses=True), 1):
         shop, region, address, quantity = row
         shop, region = (shop or "").strip(), (region or "").strip()
         message = ""
+        excluded: dict[int, str] = {}
         try:
             if not shop or len(shop) > 50 or region not in ("Hong Kong", "Macau"):
                 raise RecorderError("Shop code or region is invalid.")
@@ -180,16 +190,22 @@ def _plan_batch(password: str) -> tuple[BatchReport, dict[int, Recorder]]:
                 raise RecorderError("Duplicate recorder configuration for this shop and address.")
             seen.add(key)
             recorders[index] = recorder
+            report.recorder_keys[index] = recorder_key(shop, region, recorder.base)
+            if not recheck_skipped:
+                excluded = exclusions.get(report.recorder_keys[index])
         except RecorderError as error:
             message = str(error)
         channels = range(1, quantity + 1) if not message else (0,)
         for channel in channels:
+            skipped_channel = channel in excluded
             report.items.append(Item(
                 id=uuid4(), recorder_index=index, shop_code=shop[:50], region=region[:20],
                 channel=channel, camera_name=f"Channel {channel}" if channel else "",
-                status="skipped" if message else "pending",
-                coverage_method="none" if message else "configured_count", message=message,
+                status="skipped" if message or skipped_channel else "pending",
+                coverage_method="none" if message else "excluded" if skipped_channel else "configured_count",
+                message=exclusion_message(excluded[channel]) if skipped_channel else message,
                 captured_at=None, has_evidence=False, has_record=False,
+                excluded=skipped_channel, can_exclude=not bool(message),
             ))
     return report, recorders
 
@@ -212,6 +228,9 @@ def _failure_reason(error: Exception) -> str:
 
 def _capture_batch(root: Path, report: BatchReport, recorders: dict[int, Recorder], connection) -> None:
     try:
+        exclusions = ChannelExclusions(root)
+        present: dict[int, set[int]] = {}
+        not_found: dict[int, set[int]] = {}
         rejected: set[int] = set()
         for item in report.items:
             if item.status != "pending":
@@ -226,6 +245,7 @@ def _capture_batch(root: Path, report: BatchReport, recorders: dict[int, Recorde
                 _write_report(root, report)
                 try:
                     image = prepare_screenshot(recorders[item.recorder_index].snapshot(item.channel))
+                    present.setdefault(item.recorder_index, set()).add(item.channel)
                     item.captured_at = _utc_now()
                     save_snapshot(_directory(root, report.id), report.started_at.astimezone(HONG_KONG).date(),
                                   str(item.recorder_index), item.channel, image)
@@ -234,9 +254,15 @@ def _capture_batch(root: Path, report: BatchReport, recorders: dict[int, Recorde
                 except (RecorderError, InvalidScreenshot, SnapshotStorageError) as error:
                     if isinstance(error, RecorderAuthenticationError):
                         rejected.add(item.recorder_index)
+                    if isinstance(error, RecorderChannelNotFoundError):
+                        not_found.setdefault(item.recorder_index, set()).add(item.channel)
                     item.status = "failed"
                     item.message = str(error)[:1000]
             _write_report(root, report)
+        for index, key in report.recorder_keys.items():
+            exclusions.record_results(
+                key, present.get(index, set()), not_found.get(index, set()), recheck=report.recheck_skipped,
+            )
         report.status = "completed"
         report.finished_at = _utc_now()
         _write_report(root, report)
@@ -262,7 +288,7 @@ router = APIRouter(prefix="/api/snapshot-batches", tags=["snapshot batches"],
 
 
 @router.post("", response_model=BatchRun, status_code=202)
-def start_batch(background: BackgroundTasks) -> BatchRun:
+def start_batch(background: BackgroundTasks, recheck_skipped: bool = False) -> BatchRun:
     settings = RecorderSettings()
     password = settings.dahau_password.get_secret_value()
     if not password.strip():
@@ -272,7 +298,7 @@ def start_batch(background: BackgroundTasks) -> BatchRun:
         raise HTTPException(409, "A manual snapshot batch is already running.")
     try:
         _recover_interrupted(settings.snapshot_dir)
-        report, recorders = _plan_batch(password)
+        report, recorders = _plan_batch(password, settings.snapshot_dir, recheck_skipped)
         if not report.items:
             raise HTTPException(422, "No DAHAU recorders are configured for batch capture.")
         _write_report(settings.snapshot_dir, report)
@@ -298,8 +324,58 @@ def batch_items(batch_id: UUID, page: Annotated[int, Query(ge=1)] = 1,
     _refresh_reports(root)
     report = _read_report(root, batch_id)
     start = (page - 1) * page_size
-    return ItemPage(items=report.items[start:start + page_size], total=len(report.items),
+    keys = _report_recorder_keys(report)
+    exclusions = ChannelExclusions(root)
+    excluded = {index: exclusions.get(key) for index, key in keys.items()}
+    items = [item.model_copy(update={
+        "can_exclude": item.channel > 0 and item.recorder_index in keys,
+        "excluded": item.channel in excluded.get(item.recorder_index, {}),
+    }) for item in report.items[start:start + page_size]]
+    return ItemPage(items=items, total=len(report.items),
                     page=page, page_size=page_size)
+
+
+def _report_recorder_keys(report: BatchReport) -> dict[int, str]:
+    keys = dict(report.recorder_keys)
+    unresolved = {item.recorder_index: item for item in report.items
+                  if item.channel > 0 and item.recorder_index not in keys}
+    if not unresolved:
+        return keys
+    rows = _eligible_recorders(include_missing_addresses=True)
+    for index, item in unresolved.items():
+        candidates = [row for row in rows
+                      if (row[0] or "").strip() == item.shop_code and (row[1] or "").strip() == item.region]
+        if len(candidates) != 1:
+            continue
+        shop, region, address, quantity = candidates[0]
+        if not isinstance(address, str) or not address.strip() or not isinstance(quantity, int):
+            continue
+        if not 1 <= item.channel <= quantity <= MAX_CHANNELS:
+            continue
+        try:
+            keys[index] = recorder_key(shop.strip(), region.strip(), f"http://{_address(address)}")
+        except RecorderError:
+            continue
+    return keys
+
+
+class ChannelExclusionRequest(BaseModel):
+    skip: bool = Field(strict=True)
+
+
+@router.patch("/{batch_id}/items/{item_id}/exclusion", response_model=ChannelExclusionRequest)
+def set_channel_exclusion(batch_id: UUID, item_id: UUID,
+                          selection: ChannelExclusionRequest) -> ChannelExclusionRequest:
+    root = RecorderSettings().snapshot_dir
+    report = _read_report(root, batch_id)
+    item = next((entry for entry in report.items if entry.id == item_id), None)
+    if item is None:
+        raise HTTPException(404, "Snapshot batch item not found.")
+    key = _report_recorder_keys(report).get(item.recorder_index)
+    if item.channel < 1 or key is None:
+        raise HTTPException(409, "A unique current recorder configuration is required to exclude this channel.")
+    ChannelExclusions(root).set_skipped(key, item.channel, selection.skip)
+    return selection
 
 
 @router.get("/{batch_id}/report")
