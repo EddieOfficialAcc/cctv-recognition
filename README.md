@@ -10,12 +10,25 @@ Vite and Tailwind CSS frontend and a Python FastAPI backend.
 - `backend/app/` - FastAPI application.
 - `backend/tests/` - backend tests.
 
-The screenshot workflow supports validated uploads, persisted recognition
-results and evidence, a searchable/paginated inspection table, and operator
-review with notes. One vision API request analyzes the screenshot and optional
-burst frames and approved baseline. An opt-in scheduled DAHAU capture worker
-is present but has not been tested against a recorder and is disabled by default.
-The health endpoint checks the API process, not any camera or database.
+The interface opens on **Monitoring overview**, centered on periodic,
+LLM-powered camera inspections: schedule fresh DAHAU snapshots, inspect them
+with the configured vision model, then review the findings. The overview
+refreshes service readiness, enabled schedules, the next planned check (Hong
+Kong time), and recent capture batches every ten seconds. These indicators
+describe automation readiness, not live camera health. Capture completion
+does not imply that AI review is complete.
+
+Use **Automatic AI checks** to manage schedules and **Inspection reports**
+to view capture and analysis progress. Reports open on AI review for capture
+batches, which include current scheduled checks; the capture tab and legacy
+daily runs remain available. Links from schedule history open capture progress.
+**Recognition records** provides searchable findings, evidence and operator
+review with notes. Manual screenshot upload remains available there as a
+secondary, one-off inspection tool. One vision API request analyzes the
+screenshot and optional burst frames and approved baseline. Automation is
+opt-in and is never enabled by visiting the overview. Recorder behavior must
+be verified before enabling capture. The health endpoint checks the API
+process, not any camera or database.
 
 The authenticated **Camera configuration** tab displays a read-only,
 paginated selection of current `dbo.cctv_config` fields for all brands.
@@ -61,7 +74,7 @@ environment to also run the existing three checks and create recognition
 records. A worker restart marks interrupted work and missed runs; already saved
 JPEGs remain on disk.
 
-Open **Daily inspection reports** and select **View snapshot** on a saved
+Open **Inspection reports** and select **View snapshot** on a saved
 result to preview its JPEG in the app. For an on-demand image, open **Camera
 configuration**, choose **Capture snapshot** on a DAHAU recorder, select a
 channel, and choose **Capture and download**. Supported browsers prompt for a
@@ -104,9 +117,10 @@ and put the required shared password and optional analysis setting in the privat
 environment file. Create the project-root `camera-snapshots` folder with write
 access for the container's `appuser`, then start the `inspection-worker` with
 `docker compose --profile inspection up -d --build inspection-worker`.
-The website's **Snapshot worker** tab shows the schedule and last recorded run,
-and generates a Windows launch command for the selected capture mode. It does
-not show live process status, start the worker, or store credentials.
+The website's **Automatic AI checks** page manages the web backend's review
+schedules and shows scheduled capture history. It does not start or configure
+this legacy command-line worker or store its credentials. Its scheduler
+status describes the web backend, not the legacy worker process.
 Keep the archive private and manage disk space. The worker uses a SQL Server
 application lock to prevent concurrent workers and does not automatically
 restart after an error.

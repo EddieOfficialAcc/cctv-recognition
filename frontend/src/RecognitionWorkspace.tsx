@@ -10,10 +10,12 @@ import { Icon } from './components/Icon'
 import { RecordDrawer } from './components/RecordDrawer'
 import { SnapshotWorker } from './components/SnapshotWorker'
 import { UploadDialog } from './components/UploadDialog'
+import { MonitoringOverview } from './components/MonitoringOverview'
 import { useLocale } from './localization'
 import { isLanguage } from './messages'
 
 const viewLabels = {
+  overview: 'monitoringOverview',
   records: 'recognitionRecords', configuration: 'cameraConfiguration',
   reports: 'inspectionReports', worker: 'snapshotWorker',
 } as const
@@ -33,14 +35,26 @@ export function RecognitionWorkspace({ apiStatus, onLogout }: { apiStatus: strin
   const [selected, setSelected] = useState<RecognitionRecord | null>(null)
   const [notice, setNotice] = useState<RecognitionRecord | null>(null)
   const [logoutError, setLogoutError] = useState(false)
-  const [view, setView] = useState<keyof typeof viewLabels>('records')
+  const [view, setView] = useState<keyof typeof viewLabels>('overview')
   const [reportBatch, setReportBatch] = useState<string | undefined>()
+  const [reportTab, setReportTab] = useState<'capture' | 'analysis'>('analysis')
   const [smallScreen, setSmallScreen] = useState(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 640px)').matches)
   const [sidebarPreference, setSidebarPreference] = useState<boolean | null>(null)
   const sidebarVisible = sidebarPreference ?? !smallScreen
   const sidebarToggleRef = useRef<HTMLButtonElement>(null)
   const focusSidebarToggle = useRef(false)
   const hasFilters = Boolean(search || outcome || review || region)
+  const pageTitle = t(viewLabels[view])
+
+  useEffect(() => {
+    document.title = `${pageTitle} | RetailVision`
+  }, [pageTitle])
+
+  function openReports(batch?: string, tab: 'capture' | 'analysis' = 'analysis') {
+    setReportBatch(batch)
+    setReportTab(tab)
+    setView('reports')
+  }
 
   useEffect(() => {
     if (focusSidebarToggle.current) {
@@ -58,6 +72,7 @@ export function RecognitionWorkspace({ apiStatus, onLogout }: { apiStatus: strin
   }, [])
 
   useEffect(() => {
+    if (view !== 'records') return
     const controller = new AbortController()
     const timer = setTimeout(() => {
       setLoading(true); setError(null)
@@ -80,7 +95,7 @@ export function RecognitionWorkspace({ apiStatus, onLogout }: { apiStatus: strin
       })
     }, 250)
     return () => { clearTimeout(timer); controller.abort() }
-  }, [page, search, outcome, review, region, refresh])
+  }, [view, page, search, outcome, review, region, refresh])
 
   function startLoading() {
     setLoading(true)
@@ -123,23 +138,24 @@ export function RecognitionWorkspace({ apiStatus, onLogout }: { apiStatus: strin
         <span>RETAIL<span className="brand-accent">VISION</span><small>{t('platform')}</small></span>
       </a>
       <div className="workspace-label">{t('operationsWorkspace')}</div>
-      <nav aria-label={t('mainNavigation')}><a className={`nav-item${view === 'records' ? ' active' : ''}`} href="#main-content"
-        aria-current={view === 'records' ? 'page' : undefined} onClick={() => setView('records')}>
-        <Icon name="grid" size={19} /><span>{t('recognitionRecords')}</span>{view === 'records' && <span className="nav-dot" />}
-      </a><a className={`nav-item${view === 'configuration' ? ' active' : ''}`} href="#main-content"
-        aria-current={view === 'configuration' ? 'page' : undefined} onClick={() => setView('configuration')}>
-        <Icon name="camera" size={19} /><span>{t('cameraConfiguration')}</span>{view === 'configuration' && <span className="nav-dot" />}
-      </a><a className={`nav-item${view === 'reports' ? ' active' : ''}`} href="#main-content"
-        aria-current={view === 'reports' ? 'page' : undefined} onClick={() => setView('reports')}>
-        <Icon name="file" size={19} /><span>{t('inspectionReports')}</span>{view === 'reports' && <span className="nav-dot" />}
-      </a><a className={`nav-item${view === 'worker' ? ' active' : ''}`} href="#main-content"
-        aria-current={view === 'worker' ? 'page' : undefined} onClick={() => setView('worker')}>
-        <Icon name="clock" size={19} /><span>{t('snapshotWorker')}</span>{view === 'worker' && <span className="nav-dot" />}
-      </a></nav>
+      <nav aria-label={t('mainNavigation')}>
+        {([
+          ['overview', 'grid'], ['worker', 'clock'], ['reports', 'file'],
+          ['records', 'shield'], ['configuration', 'camera'],
+        ] as const).map(([item, icon]) => <a key={item} className={`nav-item${view === item ? ' active' : ''}`} href="#main-content"
+          aria-current={view === item ? 'page' : undefined} title={t(viewLabels[item])}
+          onClick={() => {
+            if (item === 'reports') { setReportBatch(undefined); setReportTab('analysis') }
+            setView(item)
+            if (smallScreen) setSidebarPreference(false)
+          }}>
+          <Icon name={icon} size={19} /><span>{t(viewLabels[item])}</span>{view === item && <span className="nav-dot" />}
+        </a>)}
+      </nav>
       <div className="sidebar-scope">
         <p className="workspace-label">{t('currentWorkflow')}</p>
-        <div><Icon name="upload" size={17} /><span>{t('screenshotUploads')}</span></div>
-        <p>{t('captureExternally')}<br />{t('inspectHere')}</p>
+        <div><Icon name="clock" size={17} /><span>{t('monitoringAutomatic')}</span></div>
+        <p>{t('monitoringSidebarHint')}</p>
       </div>
       <div className="sidebar-bottom"><Icon name="shield" size={18} /><div>{t('internalOperations')}<small>{t('regions')}</small></div>
         {sidebarVisible && sidebarToggle}
@@ -178,17 +194,19 @@ export function RecognitionWorkspace({ apiStatus, onLogout }: { apiStatus: strin
       </header>
       <main id="main-content">
         {logoutError && <div className="error-message language-warning" role="alert">{t('loginLogoutError')}</div>}
-        {view === 'configuration' ? <CameraConfiguration /> : view === 'reports' ? <InspectionReports onSelect={setSelected} initialBatch={reportBatch} /> :
-          view === 'worker' ? <SnapshotWorker onOpenReports={batch => { setReportBatch(batch); setView('reports') }} /> : <>
+        {storageError && <div className="error-message language-warning" role="alert">{t('languageStorageError')}</div>}
+        {view === 'overview' ? <MonitoringOverview onSchedules={() => setView('worker')} onReports={openReports}
+          onCameras={() => setView('configuration')} onRecords={() => setView('records')} /> :
+          view === 'configuration' ? <CameraConfiguration /> : view === 'reports' ? <InspectionReports onSelect={setSelected} initialBatch={reportBatch} initialTab={reportTab} /> :
+          view === 'worker' ? <SnapshotWorker onOpenReports={batch => openReports(batch, 'capture')} /> : <>
         <div className="page-heading">
           <div><p className="eyebrow">{t('qualityAssurance')}</p><h1>{t('recognitionRecords')}</h1>
             <p className="page-description">{t('pageDescription')}</p>
           </div>
-          <button className="button primary" onClick={() => setUploadOpen(true)}>
+          <button className="button secondary" onClick={() => setUploadOpen(true)}>
             <Icon name="upload" size={18} />{t('uploadScreenshot')}
           </button>
         </div>
-        {storageError && <div className="error-message language-warning" role="alert">{t('languageStorageError')}</div>}
         {notice && <div className="notice success-notice" role="status"><Icon name="check" size={18} /><p>{t('uploadedNotice', { shop: notice.shop_code || t('notProvided'), camera: notice.camera_name || t('notProvided') })}</p>
           <button className="icon-button" aria-label={t('dismissNotification')} onClick={() => setNotice(null)}><Icon name="close" size={16} /></button>
         </div>}
@@ -201,7 +219,6 @@ export function RecognitionWorkspace({ apiStatus, onLogout }: { apiStatus: strin
         </section>
         <div className="coverage-banner"><span className="coverage-icon"><Icon name="info" size={20} /></span>
           <div><strong>{t('coverageTitle')}</strong><p>{t('coverageDescription')}</p></div>
-          <span className="coverage-tag">{t('manualUpload')}</span>
         </div>
         <section className="records-panel" aria-labelledby="records-title">
           <div className="panel-heading"><div className="section-heading"><h2 id="records-title">{t('history')}</h2>
@@ -255,8 +272,8 @@ export function RecognitionWorkspace({ apiStatus, onLogout }: { apiStatus: strin
                   <div className="empty-state"><span className="empty-icon"><Icon name={hasFilters ? 'search' : 'image'} size={29} /></span>
                     <h3>{t(hasFilters ? 'noMatches' : 'emptyTitle')}</h3>
                     <p>{t(hasFilters ? 'noMatchesDescription' : 'emptyDescription')}</p>
-                    <button className="button primary" onClick={hasFilters ? clearFilters : () => setUploadOpen(true)}>
-                      {t(hasFilters ? 'resetFilters' : 'firstUpload')}</button>
+                    <button className="button primary" onClick={hasFilters ? clearFilters : () => setView('worker')}>
+                      {t(hasFilters ? 'resetFilters' : 'monitoringSetUp')}</button>
                   </div>}
           </div>
           <footer className="table-footer"><span>{loading ? t('updating') : error ? t('recordsUnavailable') :

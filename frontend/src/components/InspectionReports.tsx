@@ -29,8 +29,8 @@ export function InspectionProgress({ run, manual, onViewReport }: {
   </div>
 }
 
-export function InspectionReports({ onSelect, initialBatch }: {
-  onSelect: (record: RecognitionRecord) => void; initialBatch?: string
+export function InspectionReports({ onSelect, initialBatch, initialTab = 'analysis' }: {
+  onSelect: (record: RecognitionRecord) => void; initialBatch?: string; initialTab?: 'capture' | 'analysis'
 }) {
   const { t, formatDate, errorMessage } = useLocale()
   const [runs, setRuns] = useState<InspectionRun[]>([])
@@ -42,7 +42,7 @@ export function InspectionReports({ onSelect, initialBatch }: {
   const [error, setError] = useState<Error | null>(null)
   const [recordError, setRecordError] = useState(false)
   const [preview, setPreview] = useState<{ url: string; name: string; filename: string } | null>(null)
-  const [manual, setManual] = useState(Boolean(initialBatch))
+  const [manual, setManual] = useState(true)
   const [starting, setStarting] = useState(false)
   const [startError, setStartError] = useState<Error | null>(null)
   const [confirmBatch, setConfirmBatch] = useState(false)
@@ -51,7 +51,7 @@ export function InspectionReports({ onSelect, initialBatch }: {
   const [exclusionError, setExclusionError] = useState<Error | null>(null)
   const [exclusionSaved, setExclusionSaved] = useState(false)
   const [viewReport, setViewReport] = useState<string | null>(null)
-  const [tab, setTab] = useState<'capture' | 'analysis'>('capture')
+  const [tab, setTab] = useState<'capture' | 'analysis'>(initialTab)
   const run = runs.find(entry => runKey(entry) === selected)
   const itemRevision = run ? `${run.status}:${run.completed}:${run.failed}:${run.skipped}:${run.interrupted}:${run.saved}` : ''
 
@@ -136,14 +136,14 @@ export function InspectionReports({ onSelect, initialBatch }: {
       </div>
     </div>
     <div className="report-tabs" role="tablist" aria-label={t('reportViews')}>
-      {(['capture', 'analysis'] as const).map(value => <button key={value} type="button" role="tab"
+      {(['analysis', 'capture'] as const).map(value => <button key={value} type="button" role="tab"
         id={`inspection-tab-${value}`} aria-controls={`inspection-panel-${value}`}
         aria-selected={tab === value} tabIndex={tab === value ? 0 : -1}
         onClick={() => setTab(value)} onKeyDown={event => {
           let next: typeof tab
           if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') next = tab === 'capture' ? 'analysis' : 'capture'
-          else if (event.key === 'Home') next = 'capture'
-          else if (event.key === 'End') next = 'analysis'
+          else if (event.key === 'Home') next = 'analysis'
+          else if (event.key === 'End') next = 'capture'
           else return
           event.preventDefault(); setTab(next); document.getElementById(`inspection-tab-${next}`)?.focus()
         }}>{t(value === 'capture' ? 'reportCaptureTab' : 'aiReview')}</button>)}

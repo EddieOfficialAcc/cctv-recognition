@@ -160,14 +160,20 @@ test('inspection reports exposes bulk capture and run selection in all locales',
         return React.createElement(LocaleContext.Provider, { value: useLanguageState() }, children)
       }
       const html = renderToStaticMarkup(React.createElement(Provider, null,
-        React.createElement(InspectionReports, { onSelect() {} })))
+        React.createElement(InspectionReports, { onSelect() {}, initialTab: 'capture' })))
       assert.ok(html.includes(capture))
-      assert.match(html, /option value="manual"/)
+      assert.match(html, /option value="manual" selected=""/)
       assert.match(html, /camera-snapshots\/batches/)
       assert.match(html, /role="tablist"/)
       assert.match(html, /id="inspection-tab-capture"[^>]*aria-selected="true"/)
       assert.match(html, /id="inspection-tab-analysis"[^>]*aria-selected="false"/)
       assert.doesNotMatch(html, /type="checkbox"/)
+      const defaultView = renderToStaticMarkup(React.createElement(Provider, null,
+        React.createElement(InspectionReports, { onSelect() {} })))
+      assert.match(defaultView, /id="inspection-tab-analysis"[^>]*aria-selected="true"/)
+      assert.match(defaultView, /id="inspection-tab-capture"[^>]*aria-selected="false"/)
+      assert.match(defaultView, /option value="manual" selected=""/)
+      assert.ok(!defaultView.includes(capture), 'bulk capture is secondary to AI results')
       const progress = renderToStaticMarkup(React.createElement(Provider, null,
         React.createElement(InspectionProgress, {
           manual: true,

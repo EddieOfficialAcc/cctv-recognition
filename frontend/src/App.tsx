@@ -14,7 +14,7 @@ function App() {
   const { language } = useLocale()
 
   useEffect(() => {
-    document.title = `${translate(language, authState === 'workspace' ? 'recognitionRecords' : 'loginTitle')} | RetailVision`
+    if (authState !== 'workspace') document.title = `${translate(language, 'loginTitle')} | RetailVision`
   }, [language, authState])
 
   useEffect(() => {
