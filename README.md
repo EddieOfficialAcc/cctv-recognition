@@ -292,7 +292,7 @@ indexes and foreign keys. `NVARCHAR` metadata
 supports both Traditional and Simplified Chinese. No SQL Server schema changes
 happen merely by opening the UI or changing its language.
 
-The `vision-llm-v2` analyzer requests signal, timestamp reading and scene
+The `vision-llm-v2` analyzer requests signal, timestamp reading/comparison and scene
 analysis in a single model call. A matching approved baseline is supplied for
 scene comparison when available. Without a baseline, a scene pass is changed
 to **Not assessed**; obvious visible problems can still be flagged. The model
@@ -327,7 +327,8 @@ Before the first save, defaults preserve the existing criteria, upper-right
 timestamp location and `VISION_DRIFT_SECONDS` threshold (180 seconds unless
 configured otherwise). Saved rules take precedence over that environment
 threshold. Fixed safeguards remain: uncertain timestamp readings and missing
-capture times never pass, the 60-second threshold uncertainty band is retained,
+capture times never pass, LLM/server disagreements require manual review,
+the 60-second threshold uncertainty band is retained,
 and viewpoint comparison cannot pass without an approved baseline.
 
 ### Optional manual burst checks (experimental)
@@ -364,11 +365,20 @@ uploads include the approved baseline in the vision request.
 The vision model checks the timestamp location selected in **Checking rules**
 (upper-right by default) in the current screenshot for
 presence and readability and reads its date and time; no separate OCR library
-is used. The backend validates the model's normalized `YYYY-MM-DD HH:MM:SS`
-reading and compares it, assumed to be Hong Kong/Macau time (UTC+8), with the
-supplied actual capture time. It does not substitute upload time. The record
-shows the reading, capture time, signed difference (camera minus capture time),
-configured threshold and reason for the result. The default drift threshold is
+is used. In the same call, the LLM receives the actual snapshot capture time
+normalized to Hong Kong time (UTC+8), allowed drift and 60-second uncertainty
+band. It compares the full visible date and time against this reference and
+returns `within`, `outside` or `not_assessed`. Capture metadata must never be
+used to guess unreadable digits. Upload time is never substituted.
+
+The backend independently validates the normalized `YYYY-MM-DD HH:MM:SS`
+reading and calculates its difference from the actual capture time. An LLM/server
+disagreement never passes: a server-verified out-of-range time remains flagged;
+other disagreements are **Not assessed**. Both require manual review. The record
+shows the reading, capture time, signed server-calculated difference (camera minus
+capture time), LLM comparison, configured threshold and reason. Older records
+without an LLM comparison remain readable and are not reanalyzed.
+The default drift threshold is
 180 seconds, initially configurable with `VISION_DRIFT_SECONDS` and editable in
 **Checking rules**. Since the form captures time to the minute, results
 within 60 seconds of the threshold are **Not assessed**. Missing capture time

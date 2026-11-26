@@ -36,6 +36,18 @@ test('record drawer localizes new timestamp details and preserves old explanatio
       assert.match(current, /180 秒/)
       assert.match(current, /<dt>時間戳<\/dt>/)
       assert.doesNotMatch(current, /右上角|左上角/)
+      assert.doesNotMatch(current, /LLM 時間比較/)
+      const compared = render('vision-llm-v2', JSON.stringify({
+        state: 'readable', reading: '2026-11-24 10:25:00',
+        difference_seconds: -300, threshold_seconds: 180, reason: 'outside', model_comparison: 'outside',
+      }))
+      assert.match(compared, /<dt>LLM 時間比較<\/dt><dd>超出允許偏差<\/dd>/)
+      const disagreement = render('vision-llm-v2', JSON.stringify({
+        state: 'readable', reading: '2026-11-24 10:25:00', difference_seconds: -300,
+        threshold_seconds: 180, reason: 'comparison_disagreement', model_comparison: 'within',
+      }))
+      assert.match(disagreement, /LLM 的比較結果與經驗證的時間差不一致/)
+      assert.match(disagreement, /<dt>LLM 時間比較<\/dt><dd>在允許偏差範圍內<\/dd>/)
       const missing = render('vision-llm-v2', JSON.stringify({
         state: 'missing', reading: null, difference_seconds: null, threshold_seconds: 180, reason: 'missing',
       }), { shop_code: '', camera_name: '' })

@@ -20,7 +20,11 @@ const timestampReasons: Record<TimestampDetails['reason'], MessageKey> = {
   ambiguous: 'timestampReasonAmbiguous', invalid: 'timestampReasonInvalid',
   capture_missing: 'timestampReasonCaptureMissing', boundary: 'timestampReasonBoundary',
   outside: 'timestampReasonOutside', within: 'timestampReasonWithin',
+  comparison_disagreement: 'timestampReasonComparisonDisagreement',
 }
+const timestampComparisons = {
+  within: 'timestampModelWithin', outside: 'timestampModelOutside', not_assessed: 'timestampModelNotAssessed',
+} as const
 
 export function RecordDrawer({ record, onClose, onSaved }: {
   record: RecognitionRecord; onClose: () => void; onSaved: (record: RecognitionRecord) => void
@@ -136,6 +140,8 @@ export function RecordDrawer({ record, onClose, onSaved }: {
                 ? t('notProvided')
                 : t('timestampDifferenceValue', { seconds: `${details.difference_seconds >= 0 ? '+' : ''}${details.difference_seconds}` })}</dd></div>
               <div><dt>{t('timestampThreshold')}</dt><dd>{t('timestampSeconds', { seconds: details.threshold_seconds })}</dd></div>
+              {details.model_comparison && <div><dt>{t('timestampModelComparison')}</dt>
+                <dd>{t(timestampComparisons[details.model_comparison])}</dd></div>}
             </dl>
           </> : <p>{t('timestampDetailsUnavailable')}</p> : <p>{checkExplanation(record, check)}</p>}
         </section>

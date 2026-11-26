@@ -141,6 +141,7 @@ export function CheckingRules() {
                   onChange={event => setDrift(event.target.value)} /><span className="field-hint">{t('rulesDriftRange')}</span></label>
               </div> : <dl className="rules-timestamp-fields"><div><dt>{t('rulesTimestampPosition')}</dt><dd>{t(positionKeys[values.timestamp_position])}</dd></div>
                 <div><dt>{t('rulesTimestampDrift')}</dt><dd>{t('rulesSeconds', { count: values.timestamp_drift_seconds })}</dd></div></dl>}
+              <p className="field-hint">{t('rulesTimestampReference')}</p>
               <p className="field-hint">{t('rulesTimestampSafety')}</p>
             </div>
           </section>

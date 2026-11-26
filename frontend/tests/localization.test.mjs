@@ -35,6 +35,10 @@ test('timestamp details preserve signed differences and reject invalid stored da
     difference_seconds: -300, threshold_seconds: 180, reason: 'outside',
   }
   assert.deepEqual(parseTimestampDetails(JSON.stringify(details)), details)
+  const compared = { ...details, model_comparison: 'outside' }
+  assert.deepEqual(parseTimestampDetails(JSON.stringify(compared)), compared)
+  assert.equal(parseTimestampDetails(JSON.stringify({ ...details, model_comparison: 'unknown' })), null)
+  assert.equal(parseTimestampDetails(JSON.stringify({ ...details, model_comparison: null })), null)
   assert.equal(parseTimestampDetails('Camera timestamp differs from the supplied capture time by approximately 300 seconds.'), null)
   assert.equal(parseTimestampDetails(JSON.stringify({ ...details, threshold_seconds: -1 })), null)
   assert.equal(parseTimestampDetails(JSON.stringify({ ...details, reason: 'unknown' })), null)
