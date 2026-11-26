@@ -13,9 +13,58 @@ Vite and Tailwind CSS frontend and a Python FastAPI backend.
 The screenshot workflow supports validated uploads, persisted recognition
 results and evidence, a searchable/paginated inspection table, and operator
 review with notes. One vision API request analyzes the screenshot and optional
-burst frames and approved baseline. Direct device connections and automated
-capture are not yet implemented.
+burst frames and approved baseline. An opt-in scheduled DAHAU capture worker
+is present but has not been tested against a recorder and is disabled by default.
 The health endpoint checks the API process, not any camera or database.
+
+The authenticated **Camera configuration** tab displays a read-only,
+paginated selection of current `dbo.cctv_config` fields for all brands.
+Use **Refresh** to reload it; the tab does not poll automatically. It shows
+only whether both credentials are present, never the username or password.
+The application database login requires SELECT permission on `dbo.cctv_config`.
+
+### Scheduled DAHAU inspections (unverified)
+
+The optional worker selects only `brand = 'DAHAU'` rows with non-NULL shop
+name, Internal IP, administrator name and password. It uses port 81, HTTP
+Digest authentication and the DAHAU snapshot endpoint. It attempts to read
+channel titles through the recorder API, then falls back to channels 1 through
+`cam_qty` if discovery fails. Neither the title-to-snapshot channel mapping nor
+the discovery endpoint has been verified on the target recorders; both methods
+are reported as uncertain and the fallback may miss channels starting above 1.
+Reports show the recorder's channel names where available. To keep baseline
+matching independent of channel-name or shop-configuration changes, automated
+recognition records instead use a stable channel-number and opaque recorder
+identifier as the camera name. Existing baselines approved under other names
+will not match; approve new baselines for these identities. The identifier
+mapping is stored in the application database and must be retained for baseline
+continuity. Changing a recorder's address, shop or region creates a new identity.
+Duplicate entries for the same shop and recorder are skipped.
+
+The worker starts a run at 09:30 Asia/Hong_Kong; capture is sequential, so
+individual capture times may be much later. A missed start is reported rather
+than run later. Snapshots are saved before vision analysis; completed records
+use the existing three checks and appear in the normal recognition view. The
+daily reports show per-channel results and downloadable saved evidence, including
+analysis failures. The report lists up to the latest 100 run dates. Interrupted
+runs can have an incomplete item list. A worker restart
+marks interrupted work and missed runs when the database becomes available.
+
+Do not enable the worker until device behavior, network access, image handling,
+permissions, runtime, storage capacity and vision-service costs are verified.
+HTTP does not encrypt screenshots; use a trusted network. Basic authentication
+is not supported. The container needs network access to the configured Internal
+IPs; the separate database `port` field is not used for snapshots. The schema
+must be reapplied before use, and the runtime SQL login needs SELECT on
+`dbo.cctv_config` and SELECT, INSERT and UPDATE on the inspection tables as
+well as the existing recognition tables. Restrict the platform to trusted
+operators and ensure camera-image transmission to the vision service is approved.
+
+The Compose `inspection` profile is disabled by default. After verification,
+set `SCHEDULED_INSPECTION_ENABLED=true` in the Compose environment and start
+the `inspection-worker` with the profile enabled, alongside the normal services.
+The worker uses a SQL Server application lock to prevent concurrent workers.
+Monitor its process and logs; it does not automatically restart after an error.
 
 ## Local development (Windows PowerShell)
 

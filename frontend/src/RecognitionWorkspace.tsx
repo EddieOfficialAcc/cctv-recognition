@@ -4,6 +4,8 @@ import {
   type RecognitionPage, type RecognitionRecord,
 } from './api'
 import { EvidenceImage } from './components/EvidenceImage'
+import { CameraConfiguration } from './components/CameraConfiguration'
+import { InspectionReports } from './components/InspectionReports'
 import { Icon } from './components/Icon'
 import { RecordDrawer } from './components/RecordDrawer'
 import { UploadDialog } from './components/UploadDialog'
@@ -25,6 +27,7 @@ export function RecognitionWorkspace({ apiStatus, onLogout }: { apiStatus: strin
   const [selected, setSelected] = useState<RecognitionRecord | null>(null)
   const [notice, setNotice] = useState<RecognitionRecord | null>(null)
   const [logoutError, setLogoutError] = useState(false)
+  const [view, setView] = useState<'records' | 'configuration' | 'reports'>('records')
   const [smallScreen, setSmallScreen] = useState(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 640px)').matches)
   const [sidebarPreference, setSidebarPreference] = useState<boolean | null>(null)
   const sidebarVisible = sidebarPreference ?? !smallScreen
@@ -113,8 +116,15 @@ export function RecognitionWorkspace({ apiStatus, onLogout }: { apiStatus: strin
         <span>RETAIL<span className="brand-accent">VISION</span><small>{t('platform')}</small></span>
       </a>
       <div className="workspace-label">{t('operationsWorkspace')}</div>
-      <nav aria-label={t('mainNavigation')}><a className="nav-item active" href="#main-content" aria-current="page" aria-label={t('recognitionRecords')}>
-        <Icon name="grid" size={19} /><span>{t('recognitionRecords')}</span><span className="nav-dot" />
+      <nav aria-label={t('mainNavigation')}><a className={`nav-item${view === 'records' ? ' active' : ''}`} href="#main-content"
+        aria-current={view === 'records' ? 'page' : undefined} onClick={() => setView('records')}>
+        <Icon name="grid" size={19} /><span>{t('recognitionRecords')}</span>{view === 'records' && <span className="nav-dot" />}
+      </a><a className={`nav-item${view === 'configuration' ? ' active' : ''}`} href="#main-content"
+        aria-current={view === 'configuration' ? 'page' : undefined} onClick={() => setView('configuration')}>
+        <Icon name="camera" size={19} /><span>{t('cameraConfiguration')}</span>{view === 'configuration' && <span className="nav-dot" />}
+      </a><a className={`nav-item${view === 'reports' ? ' active' : ''}`} href="#main-content"
+        aria-current={view === 'reports' ? 'page' : undefined} onClick={() => setView('reports')}>
+        <Icon name="file" size={19} /><span>{t('inspectionReports')}</span>{view === 'reports' && <span className="nav-dot" />}
       </a></nav>
       <div className="sidebar-scope">
         <p className="workspace-label">{t('currentWorkflow')}</p>
@@ -129,7 +139,7 @@ export function RecognitionWorkspace({ apiStatus, onLogout }: { apiStatus: strin
       <header className="topbar">
         <div className="topbar-leading">
           {!sidebarVisible && sidebarToggle}
-          <div className="breadcrumb"><span>{t('operations')}</span><Icon name="chevron" size={14} /><strong>{t('recognitionRecords')}</strong></div>
+          <div className="breadcrumb"><span>{t('operations')}</span><Icon name="chevron" size={14} /><strong>{t(view === 'records' ? 'recognitionRecords' : view === 'configuration' ? 'cameraConfiguration' : 'inspectionReports')}</strong></div>
         </div>
         <div className="topbar-actions">
         <button className="text-button" onClick={() => {
@@ -150,13 +160,15 @@ export function RecognitionWorkspace({ apiStatus, onLogout }: { apiStatus: strin
           </select>
         </label>
         <div className="connection-status" role="status" title={t(apiStatus === 'connected' ? 'apiConnected' : apiStatus === 'unavailable' ? 'apiUnavailable' : 'apiChecking')}>
-          <span className={`status-dot ${error ? 'offline' : loading ? 'checking' : ''}`} />
-          {t(error ? 'storageUnavailable' : loading ? 'syncing' : 'databaseConnected')}
+          <span className={`status-dot ${view !== 'records' ? apiStatus === 'unavailable' ? 'offline' : apiStatus === 'checking' ? 'checking' : '' : error ? 'offline' : loading ? 'checking' : ''}`} />
+          {view !== 'records' ? t(apiStatus === 'connected' ? 'apiConnected' : apiStatus === 'unavailable' ? 'apiUnavailable' : 'apiChecking') :
+            t(error ? 'storageUnavailable' : loading ? 'syncing' : 'databaseConnected')}
         </div>
         </div>
       </header>
       <main id="main-content">
         {logoutError && <div className="error-message language-warning" role="alert">{t('loginLogoutError')}</div>}
+        {view === 'configuration' ? <CameraConfiguration /> : view === 'reports' ? <InspectionReports onSelect={setSelected} /> : <>
         <div className="page-heading">
           <div><p className="eyebrow">{t('qualityAssurance')}</p><h1>{t('recognitionRecords')}</h1>
             <p className="page-description">{t('pageDescription')}</p>
@@ -245,6 +257,7 @@ export function RecognitionWorkspace({ apiStatus, onLogout }: { apiStatus: strin
           </footer>
         </section>
         <footer className="workspace-footer"><span><Icon name="shield" size={14} />{t('evidenceStored')}</span><span>{t('datesHkt')}</span></footer>
+        </>}
       </main>
     </div>
     {uploadOpen && <UploadDialog onClose={() => setUploadOpen(false)} onUploaded={uploaded} />}

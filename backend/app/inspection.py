@@ -55,6 +55,10 @@ def _jpeg(image: Image.Image) -> bytes:
     return buffer.getvalue()
 
 
+def prepare_screenshot(content: bytes) -> bytes:
+    return _jpeg(_decode_screenshot(content))
+
+
 def analyze_screenshot(
     content: bytes, captured_at: datetime | None = None, baseline: bytes | None = None,
 ) -> ScreenshotAnalysis:

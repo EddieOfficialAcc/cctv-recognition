@@ -1,4 +1,16 @@
 services:
+  inspection-worker:
+    profiles: ["inspection"]
+    build:
+      context: ./backend
+    env_file:
+      - ${BACKEND_ENV_FILE:-./backend/.env}
+    environment:
+      DB_DRIVER: ODBC Driver 18 for SQL Server
+      SCHEDULED_INSPECTION_ENABLED: ${SCHEDULED_INSPECTION_ENABLED:-false}
+    command: ["python", "-m", "app.scheduled_inspection"]
+    restart: "no"
+
   backend:
     build:
       context: ./backend

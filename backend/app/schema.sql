@@ -88,3 +88,54 @@ BEGIN
         PRIMARY KEY (record_id, category)
     );
 END;
+IF OBJECT_ID(N'dbo.inspection_runs', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.inspection_runs (
+        run_date DATE NOT NULL PRIMARY KEY,
+        status VARCHAR(20) NOT NULL CHECK (status IN ('running', 'completed', 'interrupted', 'missed')),
+        started_at DATETIME2 NULL,
+        finished_at DATETIME2 NULL
+    );
+END;
+IF OBJECT_ID(N'dbo.inspection_run_items', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.inspection_run_items (
+        id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
+        run_date DATE NOT NULL REFERENCES dbo.inspection_runs(run_date),
+        recorder_index INT NOT NULL,
+        shop_code NVARCHAR(50) NOT NULL,
+        channel INT NOT NULL,
+        camera_name NVARCHAR(100) NOT NULL,
+        region NVARCHAR(20) NOT NULL,
+        status VARCHAR(20) NOT NULL CHECK (status IN ('pending', 'captured', 'completed', 'failed', 'skipped', 'interrupted')),
+        coverage_method VARCHAR(30) NOT NULL,
+        message NVARCHAR(1000) NOT NULL,
+        captured_at DATETIME2 NULL,
+        evidence VARBINARY(MAX) NULL,
+        CONSTRAINT UQ_inspection_run_recorder_channel UNIQUE (run_date, recorder_index, channel)
+    );
+    CREATE INDEX IX_inspection_run_items_date ON dbo.inspection_run_items (run_date, shop_code, channel);
+END;
+IF COL_LENGTH(N'dbo.inspection_run_items', N'recorder_index') IS NULL
+BEGIN
+    ALTER TABLE dbo.inspection_run_items ADD recorder_index INT NULL;
+    EXEC(N';WITH numbered AS (
+        SELECT id, DENSE_RANK() OVER (PARTITION BY run_date ORDER BY shop_code) AS recorder_number
+        FROM dbo.inspection_run_items
+    )
+    UPDATE i SET recorder_index = n.recorder_number
+    FROM dbo.inspection_run_items i JOIN numbered n ON n.id = i.id;');
+    EXEC(N'ALTER TABLE dbo.inspection_run_items ALTER COLUMN recorder_index INT NOT NULL;');
+END;
+IF OBJECT_ID(N'dbo.UQ_inspection_run_channel', N'UQ') IS NOT NULL
+    ALTER TABLE dbo.inspection_run_items DROP CONSTRAINT UQ_inspection_run_channel;
+IF OBJECT_ID(N'dbo.UQ_inspection_run_recorder_channel', N'UQ') IS NULL
+    ALTER TABLE dbo.inspection_run_items ADD CONSTRAINT UQ_inspection_run_recorder_channel
+        UNIQUE (run_date, recorder_index, channel);
+IF OBJECT_ID(N'dbo.inspection_recorder_identities', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.inspection_recorder_identities (
+        fingerprint BINARY(32) NOT NULL PRIMARY KEY,
+        id UNIQUEIDENTIFIER NOT NULL UNIQUE
+    );
+END;

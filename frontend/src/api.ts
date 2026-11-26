@@ -53,6 +53,58 @@ export interface RecognitionPage {
   summary: { total: number; flagged: number; needs_review: number; unreviewed: number }
 }
 
+export interface CameraConfiguration {
+  shop_code: string | null
+  shop_name: string | null
+  company: string | null
+  region: string | null
+  brand: string | null
+  internal_ip: string | null
+  port: number | null
+  cam_qty: number | null
+  credentials_complete: boolean
+}
+
+export interface CameraConfigurationPage {
+  rows: CameraConfiguration[]
+  total: number
+  page: number
+  page_size: number
+}
+
+export interface InspectionRun {
+  run_date: string
+  status: string
+  started_at: string | null
+  finished_at: string | null
+  total: number
+  completed: number
+  failed: number
+  skipped: number
+  interrupted: number
+}
+
+export interface InspectionItem {
+  id: string
+  shop_code: string
+  channel: number
+  camera_name: string
+  region: string
+  status: string
+  coverage_method: string
+  message: string
+  captured_at: string | null
+  has_evidence: boolean
+  has_record: boolean
+}
+
+export interface InspectionItemPage {
+  items: InspectionItem[]
+  total: number
+  page: number
+  page_size: number
+}
+
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
@@ -82,6 +134,31 @@ function isPage(value: unknown): value is RecognitionPage {
     ['total', 'page', 'page_size'].every(key => typeof value[key] === 'number') &&
     isObject(value.summary) && ['total', 'flagged', 'needs_review', 'unreviewed']
       .every(key => isObject(value.summary) && typeof value.summary[key] === 'number')
+}
+
+function isCameraConfigurationPage(value: unknown): value is CameraConfigurationPage {
+  return isObject(value) && ['total', 'page', 'page_size'].every(key => typeof value[key] === 'number') &&
+    Array.isArray(value.rows) && value.rows.every(row =>
+      isObject(row) && ['shop_code', 'shop_name', 'company', 'region', 'brand', 'internal_ip']
+        .every(key => row[key] === null || typeof row[key] === 'string') &&
+      ['port', 'cam_qty'].every(key => row[key] === null || typeof row[key] === 'number') &&
+      typeof row.credentials_complete === 'boolean',
+    )
+}
+
+function isInspectionRun(value: unknown): value is InspectionRun {
+  return isObject(value) && typeof value.run_date === 'string' && typeof value.status === 'string' &&
+    ['started_at', 'finished_at'].every(key => value[key] === null || typeof value[key] === 'string') &&
+    ['total', 'completed', 'failed', 'skipped', 'interrupted'].every(key => typeof value[key] === 'number')
+}
+
+function isInspectionItemPage(value: unknown): value is InspectionItemPage {
+  return isObject(value) && ['total', 'page', 'page_size'].every(key => typeof value[key] === 'number') &&
+    Array.isArray(value.items) && value.items.every(item =>
+      isObject(item) && ['id', 'shop_code', 'camera_name', 'region', 'status', 'coverage_method', 'message']
+        .every(key => typeof item[key] === 'string') &&
+      typeof item.channel === 'number' && (item.captured_at === null || typeof item.captured_at === 'string') &&
+      typeof item.has_evidence === 'boolean' && typeof item.has_record === 'boolean')
 }
 
 async function request<T>(
@@ -117,6 +194,26 @@ async function request<T>(
 
 export function fetchRecords(params: URLSearchParams, signal: AbortSignal) {
   return request(`/api/recognitions?${params}`, isPage, { signal })
+}
+
+export function fetchCameraConfiguration(page: number, signal: AbortSignal) {
+  const params = new URLSearchParams({ page: String(page), page_size: '20' })
+  return request(`/api/camera-configuration?${params}`, isCameraConfigurationPage, { signal, cache: 'no-store' })
+}
+
+export function fetchInspectionRuns(signal: AbortSignal) {
+  return request('/api/inspection-runs', (value): value is InspectionRun[] =>
+    Array.isArray(value) && value.every(isInspectionRun), { signal, cache: 'no-store' })
+}
+
+export function fetchInspectionItems(date: string, page: number, signal: AbortSignal) {
+  const params = new URLSearchParams({ page: String(page), page_size: '20' })
+  return request(`/api/inspection-runs/${encodeURIComponent(date)}/items?${params}`, isInspectionItemPage,
+    { signal, cache: 'no-store' })
+}
+
+export function fetchRecord(id: string) {
+  return request(`/api/recognitions/${encodeURIComponent(id)}`, isRecord)
 }
 
 export function uploadScreenshot(body: FormData) {

@@ -1,4 +1,9 @@
 services:
+  inspection-worker:
+    networks:
+      - default
+      - sql
+
   backend:
     networks:
       - default
