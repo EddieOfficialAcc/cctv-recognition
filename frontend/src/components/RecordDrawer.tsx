@@ -4,6 +4,7 @@ import {
   type Baseline, type RecognitionRecord, type ReviewStatus,
 } from '../api'
 import { Dialog } from './Dialog'
+import { DailyComparison } from './DailyComparison'
 import { EvidenceImage } from './EvidenceImage'
 import { Icon } from './Icon'
 import { useLocale } from '../localization'
@@ -44,6 +45,7 @@ export function RecordDrawer({ record, onClose, onSaved }: {
   const [baselineError, setBaselineError] = useState<Error | null>(null)
   const [confirmBaseline, setConfirmBaseline] = useState(false)
   const hasCameraMetadata = Boolean(record.shop_code.trim() && record.camera_name.trim())
+  const isDaily = record.analyzer_version === 'vision-llm-daily-v1'
 
   useEffect(() => {
     if (!['burst-statistics-v1', 'vision-llm-burst-v1', 'vision-llm-burst-v2'].includes(record.analyzer_version)) return
@@ -103,8 +105,10 @@ export function RecordDrawer({ record, onClose, onSaved }: {
         <span className={`badge ${record.outcome}`}>{t(outcomeKeys[record.outcome])}</span>
         <span className="muted small">{t(reviewKeys[record.review_status])}</span>
       </div>
-      <p id="dialog-description" className="muted">{t('reviewDescription')}</p>
-      <EvidenceImage key={`${record.id}-${frameIndex}`} id={record.id} frameIndex={frameIndex} alt={t('evidenceAlt', { camera: record.camera_name || t('notProvided') })} />
+      <p id="dialog-description" className="muted">{t(isDaily ? 'dailyReviewDescription' : 'reviewDescription')}</p>
+      {isDaily && <div className="section-heading"><h3>{t('currentCaptureTitle')}</h3></div>}
+      <EvidenceImage key={`${record.id}-${frameIndex}`} id={record.id} frameIndex={frameIndex}
+        alt={t(isDaily ? 'currentCaptureAlt' : 'evidenceAlt', { camera: record.camera_name || t('notProvided') })} />
       <div className="evidence-caption"><span title={record.filename}>{record.filename}</span><span>{record.width} × {record.height}</span></div>
       {burst && <div>
         <p className="field-hint">{t('burstReviewHint', { count: burst.frame_count, seconds: burst.duration_seconds })}</p>
@@ -120,10 +124,11 @@ export function RecordDrawer({ record, onClose, onSaved }: {
         <div><dt>{t('uploadedTime')}</dt><dd>{formatDate(record.uploaded_at)}</dd></div>
         <div><dt>{t('capturedTime')}</dt><dd>{formatDate(record.captured_at)}</dd></div>
       </dl>
+      {isDaily && <DailyComparison key={record.id} recordId={record.id} />}
       <div className="section-heading"><h3>{t('recognitionResults')}</h3><span className="muted small">{t('coreChecks')}</span></div>
       <div className="check-list">{record.checks.map(check => {
         const isTimestampV2 = check.category === 'timestamp' &&
-          ['vision-llm-v2', 'vision-llm-burst-v2'].includes(record.analyzer_version)
+          ['vision-llm-v2', 'vision-llm-burst-v2', 'vision-llm-daily-v1'].includes(record.analyzer_version)
         const details = isTimestampV2 ? parseTimestampDetails(check.explanation) : null
         return <section className="check-card" key={check.category}>
           <div className="check-card-heading"><Icon name={checkIcons[check.category]} size={18} />
@@ -149,7 +154,7 @@ export function RecordDrawer({ record, onClose, onSaved }: {
       <p className="analyzer-label">{t('analyzerDisclaimer', { version: record.analyzer_version })}</p>
       <div className="review-form">
         <div className="section-heading"><h3>{t('baselineTitle')}</h3></div>
-        <p className="field-hint">{t('baselineHint')}</p>
+        <p className="field-hint">{t(isDaily ? 'dailyBaselineHint' : 'baselineHint')}</p>
         {!hasCameraMetadata && <p className="field-hint">{t('baselineMetadataRequired')}</p>}
         <div className="baseline-actions">
           <button type="button" className="button secondary" disabled={!hasCameraMetadata || busy || baselineBusy} onClick={loadBaseline}>

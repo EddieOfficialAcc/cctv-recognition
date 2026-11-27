@@ -114,7 +114,8 @@ class ScheduledInspectionTest(unittest.TestCase):
                 self.assertEqual(item.args[-2], "configured_count")
             self.assertIn("status='failed'", execute.call_args_list[-2].args[0])
             self.assertEqual(execute.call_args.args[1], "completed")
-            queue.assert_not_called()
+            queue.return_value.register_capture.assert_called_once()
+            queue.return_value.enqueue.assert_not_called()
 
     def test_snapshot_authentication_failure_marks_remaining_channels_failed_without_retry(self) -> None:
         run_date = date(2026, 11, 26)

@@ -17,6 +17,8 @@ from app.recognition_models import (
     Baseline, RecognitionPage, RecognitionRecord, Region, ReviewStatus, ReviewUpdate,
 )
 from app.vision_analysis import AnalysisError
+from app.recorder import RecorderSettings
+from app.snapshot_analysis import AnalysisQueue, QueueError
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +26,7 @@ logger = logging.getLogger(__name__)
 def database_errors():
     try:
         yield
-    except (pyodbc.Error, ValidationError) as error:
+    except (pyodbc.Error, ValidationError, QueueError) as error:
         logger.error("Recognition database operation failed (%s).", type(error).__name__)
         raise HTTPException(
             status_code=503,
@@ -117,6 +119,29 @@ def recognition_evidence(record_id: UUID) -> Response:
         raise HTTPException(404, "Recognition evidence not found.")
     return Response(
         content=evidence, media_type="image/jpeg",
+        headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+    )
+
+
+@router.get("/{record_id}/comparison")
+def recognition_comparison(record_id: UUID) -> dict[str, datetime]:
+    if repository.get_record(record_id) is None:
+        raise HTTPException(404, "Recognition record not found.")
+    comparison = AnalysisQueue(RecorderSettings().snapshot_dir).comparison(record_id)
+    if comparison is None:
+        raise HTTPException(404, "Previous-day comparison not found.")
+    return {"captured_at": comparison[0]}
+
+
+@router.get("/{record_id}/comparison/evidence")
+def recognition_comparison_evidence(record_id: UUID) -> Response:
+    if repository.get_record(record_id) is None:
+        raise HTTPException(404, "Recognition record not found.")
+    comparison = AnalysisQueue(RecorderSettings().snapshot_dir).comparison(record_id)
+    if comparison is None:
+        raise HTTPException(404, "Previous-day comparison not found.")
+    return Response(
+        content=comparison[1], media_type="image/jpeg",
         headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
     )
 

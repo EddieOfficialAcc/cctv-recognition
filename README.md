@@ -323,13 +323,16 @@ Settings persist in `checking-rules.sqlite3` under the configured snapshot
 archive (`SCHEDULED_INSPECTION_SNAPSHOT_DIR`). The backend automatically creates
 the local SQLite table; no additional SQL Server schema setup is required.
 Keep this file with the persistent archive when deploying or backing up.
-Before the first save, defaults preserve the existing criteria, upper-right
+Before the first save, defaults use the current criteria, upper-right
 timestamp location and `VISION_DRIFT_SECONDS` threshold (180 seconds unless
 configured otherwise). Saved rules take precedence over that environment
 threshold. Fixed safeguards remain: uncertain timestamp readings and missing
 capture times never pass, LLM/server disagreements require manual review,
 the 60-second threshold uncertainty band is retained,
-and viewpoint comparison cannot pass without an approved baseline.
+and viewpoint comparison cannot pass without the appropriate reference.
+Automated checks use a previous-day snapshot; without it, the scene check is
+not assessed. Manual uploads use an approved baseline; without one, visible
+problems can still be flagged but the scene check cannot pass.
 
 ### Optional manual burst checks (experimental)
 
@@ -358,7 +361,20 @@ Use consistent camera names across uploads.
 
 Approval is not attributed to an authenticated user and the UI has no approval
 history view. Access must be restricted to trusted operators. Subsequent
-uploads include the approved baseline in the vision request.
+manual uploads include the approved baseline in the vision request. Automated
+checks do not use it as their previous-day comparison.
+
+Daily automated recognition records instead compare the most recent successful
+capture from the preceding Hong Kong calendar day for the same recorder and
+channel, including capture-only batches. The review drawer shows the current
+capture and the exact comparison image and capture time used. An unavailable,
+changed or invalid comparison is marked not assessed; older analysis records
+are not reanalyzed. Existing batch reports with recorder identities are indexed
+when the worker starts. Legacy scheduled captures made before this update and
+old batch reports without recorder identities cannot reliably be matched.
+The capture index and the exact comparison evidence are stored in the archive's
+`analysis.sqlite3`; back it up with the JPEGs and retain it with the reports.
+The comparison image is selected once and retained across retries.
 
 ### Timestamp verification
 

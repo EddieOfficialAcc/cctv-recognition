@@ -12,7 +12,10 @@ logger = logging.getLogger(__name__)
 
 SIGNAL_CRITERIA = """For signal, look for visible black/blank images, no-signal messages and other visible signal faults.
 If frames are supplied, consider possible repeated frames and flicker but do not claim a live feed is healthy."""
-SCENE_CRITERIA = """For scene, assess visible obstruction, and compare the camera viewpoint to the approved baseline if provided.
+SCENE_CRITERIA = """For scene, assess visible obstruction and significant viewpoint changes.
+Compare fixed features, not temporary changes such as people, moving objects or lighting.
+For automated captures compare with the previous day's snapshot; for manual uploads use an approved baseline."""
+LEGACY_SCENE_CRITERIA = """For scene, assess visible obstruction, and compare the camera viewpoint to the approved baseline if provided.
 Without a baseline, do not claim the camera viewpoint is unchanged."""
 
 
@@ -83,6 +86,8 @@ class RulesStore:
             if row is None:
                 return CheckingRules(**self.defaults.model_dump())
             values = RuleValues.model_validate_json(row["definition"])
+            if values.scene_instructions == LEGACY_SCENE_CRITERIA:
+                values.scene_instructions = SCENE_CRITERIA
             return CheckingRules(**values.model_dump(), revision=row["revision"], updated_at=row["updated_at"])
 
     def save(self, update: RuleUpdate) -> CheckingRules:

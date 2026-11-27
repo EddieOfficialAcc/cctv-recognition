@@ -7,7 +7,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from app.auth import require_user
-from app.checking_rules import RuleUpdate, RulesConflict, RulesStorageError, RulesStore
+from app.checking_rules import LEGACY_SCENE_CRITERIA, SCENE_CRITERIA, RuleUpdate, RulesConflict, RulesStorageError, RulesStore
 from app.main import app
 
 
@@ -83,3 +83,12 @@ class CheckingRulesTest(unittest.TestCase):
         with self.assertRaises(RulesConflict):
             second.save(RuleUpdate(**second.defaults.model_dump(), revision=0))
         self.assertEqual(second.get().revision, 1)
+
+    def test_legacy_default_scene_is_updated_without_overwriting_custom_rules(self):
+        store = RulesStore(self.root)
+        store.save(RuleUpdate(**{**store.defaults.model_dump(), "scene_instructions": LEGACY_SCENE_CRITERIA},
+                              revision=0))
+        self.assertEqual(store.get().scene_instructions, SCENE_CRITERIA)
+        store.save(RuleUpdate(**{**store.defaults.model_dump(), "scene_instructions": "Custom scene rule."},
+                              revision=1))
+        self.assertEqual(store.get().scene_instructions, "Custom scene rule.")

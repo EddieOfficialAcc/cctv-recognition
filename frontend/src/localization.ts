@@ -57,10 +57,13 @@ export function useLanguageState() {
   }
 
   function checkExplanation(record: RecognitionRecord, check: RecognitionCheck) {
-    if (['vision-llm-v1', 'vision-llm-burst-v1', 'vision-llm-v2', 'vision-llm-burst-v2'].includes(record.analyzer_version)) {
+    if (['vision-llm-v1', 'vision-llm-burst-v1', 'vision-llm-v2', 'vision-llm-burst-v2', 'vision-llm-daily-v1'].includes(record.analyzer_version)) {
       if (check.category === 'signal' || check.category === 'scene') {
         if (check.explanation === 'Scene comparison requires an approved baseline. Camera movement was not assessed.') {
           return t('visionBaselineRequired')
+        }
+        if (check.explanation === 'Previous-day snapshot unavailable. Camera movement was not assessed.') {
+          return t('visionPreviousDayUnavailable')
         }
         try {
           const parsed: unknown = JSON.parse(check.explanation)

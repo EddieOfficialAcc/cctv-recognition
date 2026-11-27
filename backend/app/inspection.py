@@ -61,13 +61,15 @@ def prepare_screenshot(content: bytes) -> bytes:
 
 def analyze_screenshot(
     content: bytes, captured_at: datetime | None = None, baseline: bytes | None = None,
+    *, previous_day: bytes | None = None, daily: bool = False,
 ) -> ScreenshotAnalysis:
     image = _decode_screenshot(content)
-    evidence = _jpeg(image)
+    evidence = content if daily else _jpeg(image)
     return ScreenshotAnalysis(
         evidence=evidence, width=image.width, height=image.height,
-        analyzer_version=ANALYZER_VERSION,
-        checks=analyze(evidence, [], baseline, captured_at, None),
+        analyzer_version="vision-llm-daily-v1" if daily else ANALYZER_VERSION,
+        checks=(analyze(evidence, [], baseline, captured_at, None, previous_day=previous_day, daily=True)
+                if daily else analyze(evidence, [], baseline, captured_at, None)),
     )
 
 

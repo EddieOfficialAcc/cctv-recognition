@@ -150,6 +150,31 @@ class VisionAnalysisTest(unittest.TestCase):
         request = json.loads(factory.return_value.request.call_args.kwargs["body"])
         self.assertIsNone(json.loads(request["messages"][1]["content"][0]["text"])["actual_capture_time"])
 
+    def test_daily_comparison_is_sent_and_missing_previous_day_is_not_assessed(self):
+        body = {"choices": [{"message": {"content": json.dumps(model_result())}}]}
+        captured = datetime.fromisoformat("2026-11-24T10:30:00+08:00")
+        with patch("app.vision_analysis.HTTPSConnection") as factory:
+            response = factory.return_value.getresponse.return_value
+            response.status = 200
+            response.read.return_value = json.dumps(body).encode()
+            checks = analyze(b"current", [], None, captured, None, previous_day=b"yesterday", daily=True)
+            request = json.loads(factory.return_value.request.call_args.kwargs["body"])
+        self.assertEqual(checks[2].status, "pass")
+        self.assertIn("Previous-day snapshot", request["messages"][0]["content"])
+        self.assertIn("Previous-day snapshot:", [part.get("text") for part in request["messages"][1]["content"]])
+        self.assertIn("data:image/jpeg;base64,eWVzdGVyZGF5", [
+            part["image_url"]["url"] for part in request["messages"][1]["content"] if part["type"] == "image_url"
+        ])
+        body["choices"][0]["message"]["content"] = json.dumps({**model_result(),
+            "scene": {"status": "flagged", "explanation": model_result()["scene"]["explanation"]}})
+        with patch("app.vision_analysis.HTTPSConnection") as factory:
+            response = factory.return_value.getresponse.return_value
+            response.status = 200
+            response.read.return_value = json.dumps(body).encode()
+            checks = analyze(b"current", [], None, captured, None, daily=True)
+        self.assertEqual(checks[2].status, "not_assessed")
+        self.assertIn("Previous-day snapshot unavailable", checks[2].explanation)
+
     def test_model_comparison_disagreement_never_passes_or_clears_a_verified_fault(self):
         captured = datetime(2026, 11, 24, 2, 30, tzinfo=timezone.utc)
         for reading, comparison, expected in [

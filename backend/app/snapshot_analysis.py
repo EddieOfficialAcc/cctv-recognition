@@ -7,7 +7,7 @@ Completed items are never resubmitted; cached model results survive SQL retries.
 """
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, time as datetime_time, timedelta, timezone
 import hashlib
 import logging
 from pathlib import Path, PurePosixPath
@@ -22,13 +22,14 @@ from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app import recognition_repository as repository
-from app.inspection import MAX_UPLOAD_BYTES, InvalidScreenshot, analyze_screenshot
+from app.inspection import MAX_UPLOAD_BYTES, InvalidScreenshot, analyze_screenshot, prepare_screenshot
 from app.recognition_models import RecognitionRecord, Region
 from app.vision_analysis import AnalysisError, RetryableAnalysisError
 
 logger = logging.getLogger(__name__)
 LEASE_SECONDS = 60
 MAX_ATTEMPTS = 3
+HONG_KONG = timezone(timedelta(hours=8))
 AnalysisStatus = Literal["queued", "analyzing", "completed", "failed"]
 
 
@@ -119,6 +120,14 @@ class AnalysisQueue:
                 );
                 CREATE INDEX IF NOT EXISTS jobs_source ON jobs(source, created, id);
                 CREATE INDEX IF NOT EXISTS jobs_pending ON jobs(status, available, created);
+                CREATE TABLE IF NOT EXISTS captures (
+                    id TEXT PRIMARY KEY, recorder_key TEXT NOT NULL, channel INTEGER NOT NULL,
+                    captured REAL NOT NULL, path TEXT NOT NULL, digest TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS captures_lookup ON captures(recorder_key, channel, captured DESC);
+                CREATE TABLE IF NOT EXISTS comparisons (
+                    job_id TEXT PRIMARY KEY, captured_at TEXT, evidence BLOB
+                );
             """)
 
     @contextmanager
@@ -144,6 +153,72 @@ class AnalysisQueue:
     def set_auto_analyze(self, enabled: bool) -> None:
         with self.connection() as db:
             db.execute("UPDATE control SET auto_analyze=? WHERE id=1", (enabled,))
+
+    def capture_ids(self) -> set[str]:
+        with self.connection() as db:
+            return {row[0] for row in db.execute("SELECT id FROM captures")}
+
+    def register_capture(self, item_id: UUID, path: Path, recorder_key: str,
+                         channel: int, captured_at: datetime, *, historical: bool = False) -> None:
+        if captured_at.utcoffset() is None:
+            raise QueueError("Capture time must include a timezone offset.")
+        try:
+            relative = path.resolve().relative_to(self.root.resolve()).as_posix()
+            try:
+                content = _read_image(self.root, relative)
+            except (OSError, QueueError):
+                if not historical:
+                    raise
+                logger.warning("Historical snapshot %s is unavailable in the archive.", item_id)
+                content = None
+        except (OSError, ValueError):
+            raise QueueError("Saved snapshot is missing or outside the archive.") from None
+        with self.connection() as db:
+            db.execute(
+                "INSERT OR IGNORE INTO captures(id, recorder_key, channel, captured, path, digest) "
+                "VALUES(?,?,?,?,?,?)",
+                (str(item_id), recorder_key, channel, captured_at.timestamp(), relative,
+                 hashlib.sha256(content).hexdigest() if content is not None else ""),
+            )
+
+    def comparison(self, item_id: UUID) -> tuple[datetime, bytes] | None:
+        with self.connection() as db:
+            row = db.execute("SELECT captured_at, evidence FROM comparisons WHERE job_id=?",
+                             (str(item_id),)).fetchone()
+        if row is None or row["evidence"] is None:
+            return None
+        return datetime.fromisoformat(row["captured_at"]), bytes(row["evidence"])
+
+    def select_comparison(self, item: AnalysisInput) -> tuple[datetime, bytes] | None:
+        with self.connection() as db:
+            existing = db.execute("SELECT captured_at, evidence FROM comparisons WHERE job_id=?",
+                                  (str(item.id),)).fetchone()
+            if existing is not None:
+                return ((datetime.fromisoformat(existing["captured_at"]), bytes(existing["evidence"]))
+                        if existing["evidence"] is not None else None)
+            candidate = None
+            if item.recorder_key and item.captured_at and item.captured_at.utcoffset() is not None:
+                day = item.captured_at.astimezone(HONG_KONG).date()
+                end = datetime.combine(day, datetime_time.min, tzinfo=HONG_KONG)
+                start = end - timedelta(days=1)
+                candidate = db.execute(
+                    "SELECT captured, path, digest FROM captures WHERE recorder_key=? AND channel=? "
+                    "AND captured>=? AND captured<? ORDER BY captured DESC, id DESC LIMIT 1",
+                    (item.recorder_key, item.channel, start.timestamp(), end.timestamp()),
+                ).fetchone()
+            captured_at, evidence = None, None
+            if candidate is not None:
+                try:
+                    content = _read_image(self.root, candidate["path"])
+                    if hashlib.sha256(content).hexdigest() != candidate["digest"]:
+                        raise QueueError("Previous-day snapshot changed after capture.")
+                    evidence = prepare_screenshot(content)
+                    captured_at = datetime.fromtimestamp(candidate["captured"], timezone.utc)
+                except (OSError, QueueError, InvalidScreenshot) as error:
+                    logger.warning("Previous-day snapshot unavailable for %s (%s).", item.id, type(error).__name__)
+            db.execute("INSERT OR IGNORE INTO comparisons(job_id, captured_at, evidence) VALUES(?,?,?)",
+                       (str(item.id), captured_at.isoformat() if captured_at else None, evidence))
+        return self.comparison(item.id)
 
     def enqueue(self, source: str, item_id: UUID, path: Path, shop: str, region: str,
                 channel: int, captured_at: datetime | None, *, recorder_key: str | None = None,
@@ -279,8 +354,10 @@ def process_item(queue: AnalysisQueue, row) -> None:
             if not name:
                 identifier = repository.recorder_identifier(bytes.fromhex(item.recorder_key)) if item.recorder_key else str(item.id)
                 name = f"Channel {item.channel} [{identifier}]"
-            baseline = repository.get_baseline_evidence(item.region, item.shop_code, name)
-            analysis = analyze_screenshot(image, item.captured_at, baseline)
+            comparison = queue.select_comparison(item)
+            analysis = analyze_screenshot(
+                image, item.captured_at, previous_day=comparison[1] if comparison else None, daily=True,
+            )
             record = RecognitionRecord(
                 id=item.id, shop_code=item.shop_code, camera_name=name, region=item.region,
                 filename=f"channel-{item.channel:03d}.jpeg",
@@ -326,10 +403,15 @@ class AnalysisWorker:
     def run(self) -> None:
         active: set[Future] = set()
         recover = False
+        history_indexed = False
         try:
             with ThreadPoolExecutor(max_workers=self.concurrency, thread_name_prefix="vision") as pool:
                 while not self.stopped.is_set() or active:
                     try:
+                        if not history_indexed:
+                            from app.snapshot_batches import index_capture_history
+                            index_capture_history(self.queue)
+                            history_indexed = True
                         for future in tuple(active):
                             if future.done():
                                 active.remove(future)

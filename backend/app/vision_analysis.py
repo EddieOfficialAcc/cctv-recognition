@@ -100,7 +100,7 @@ Scene criteria:
 ${scene_instructions}
 Use flagged for plausible visible issues, not_assessed for insufficient evidence, and pass only when the
 relevant visible evidence is sufficient. Describe uncertainty and do not invent facts.
-Never claim a live feed is healthy or that the viewpoint is unchanged without an approved baseline.
+Never claim a live feed is healthy or that the viewpoint is unchanged without the required comparison image.
 Inspect only the timestamp overlay in the ${timestamp_position} corner of the current screenshot.
 If the entire date and time are unambiguously readable, normalize them to YYYY-MM-DD HH:MM:SS,
 without guessing missing digits or ambiguous date order. Otherwise use state missing, unreadable or
@@ -120,12 +120,21 @@ def _image_part(image: bytes) -> dict:
     return {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded}", "detail": "high"}}
 
 
-def _request(settings: VisionSettings, content: list[dict], rules: RuleValues | None = None) -> VisionResponse:
+def _request(settings: VisionSettings, content: list[dict], rules: RuleValues | None = None,
+             *, daily: bool = False) -> VisionResponse:
     rules = rules if rules is not None else RuleValues(timestamp_drift_seconds=settings.drift_seconds)
     prompt = Template(PROMPT).substitute(
         signal_instructions=rules.signal_instructions, scene_instructions=rules.scene_instructions,
         timestamp_position=rules.timestamp_position,
     )
+    if daily:
+        prompt += (
+            "\nFor this automated capture, compare the current screenshot with the image labeled "
+            "'Previous-day snapshot', not an approved baseline. Focus on substantial changes in fixed "
+            "features suggesting camera movement; do not treat people, moving objects, or lighting alone "
+            "as camera movement. If the previous-day image is absent or insufficient, scene is not_assessed. "
+            "This requirement takes precedence over any baseline wording in the scene criteria."
+        )
     try:
         endpoint = urlsplit(settings.endpoint)
         port = endpoint.port
@@ -228,7 +237,7 @@ def _timestamp_check(evidence: TimestampEvidence, captured_at: datetime | None, 
 
 def analyze(
     image: bytes, frames: list[bytes], baseline: bytes | None, captured_at: datetime | None,
-    burst_duration_seconds: float | None,
+    burst_duration_seconds: float | None, *, previous_day: bytes | None = None, daily: bool = False,
 ) -> list[RecognitionCheck]:
     try:
         settings = VisionSettings()
@@ -252,19 +261,26 @@ def analyze(
     ]
     if baseline is not None:
         content.extend([{"type": "text", "text": "Approved baseline:"}, _image_part(baseline)])
+    if previous_day is not None:
+        content.extend([{"type": "text", "text": "Previous-day snapshot:"}, _image_part(previous_day)])
     if frames:
         content.append({
             "type": "text",
             "text": f"Additional chronological burst frames; total duration {burst_duration_seconds} seconds:",
         })
         content.extend(_image_part(frame) for frame in frames)
-    result = _request(settings, content, rules)
+    result = _request(settings, content, rules, daily=True) if daily else _request(settings, content, rules)
     if captured_at is None and result.timestamp.comparison != "not_assessed":
         logger.error("Vision timestamp comparison was returned without an actual capture time.")
         raise AnalysisError("Vision timestamp comparison requires an actual capture time.")
     signal = _visual_check("signal", result.signal)
     scene = _visual_check("scene", result.scene)
-    if baseline is None and scene.status == "pass":
+    if daily and previous_day is None:
+        scene = RecognitionCheck(
+            category="scene", status="not_assessed",
+            explanation="Previous-day snapshot unavailable. Camera movement was not assessed.",
+        )
+    elif not daily and baseline is None and scene.status == "pass":
         scene = RecognitionCheck(
             category="scene", status="not_assessed",
             explanation="Scene comparison requires an approved baseline. Camera movement was not assessed.",

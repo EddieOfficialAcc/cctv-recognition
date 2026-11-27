@@ -17,7 +17,7 @@ from uuid import UUID, uuid4
 import pyodbc
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from app.auth import require_user
 from app.channel_exclusions import ChannelExclusions, exclusion_message, recorder_key
@@ -227,6 +227,22 @@ def _evidence_path(root: Path, report: BatchReport, item: Item) -> Path:
             / str(item.recorder_index) / f"channel-{item.channel:03d}.jpeg")
 
 
+def index_capture_history(queue: AnalysisQueue) -> None:
+    try:
+        indexed = queue.capture_ids()
+        for report in _reports(queue.root):
+            for item in report.items:
+                key = report.recorder_keys.get(item.recorder_index)
+                if (str(item.id) not in indexed and item.status == "completed"
+                        and item.has_evidence and item.captured_at and key):
+                    queue.register_capture(item.id, _evidence_path(queue.root, report, item), key,
+                                           item.channel, item.captured_at, historical=True)
+                    indexed.add(str(item.id))
+    except (OSError, ValueError, ValidationError, HTTPException) as error:
+        logger.error("Snapshot history indexing failed (%s).", type(error).__name__)
+        raise QueueError("Snapshot history could not be indexed.") from None
+
+
 class CaptureStoppedError(RuntimeError):
     pass
 
@@ -280,6 +296,11 @@ def _capture_batch(root: Path, report: BatchReport, recorders: dict[int, Recorde
                     item.status = "failed"
                     item.message = str(error)[:1000]
             _write_report(root, report)
+            if item.has_evidence and item.captured_at:
+                AnalysisQueue(root).register_capture(
+                    item.id, _evidence_path(root, report, item),
+                    report.recorder_keys[item.recorder_index], item.channel, item.captured_at,
+                )
             if report.auto_analyze and item.has_evidence:
                 try:
                     _enqueue_item(root, report, item)

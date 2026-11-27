@@ -1,4 +1,5 @@
-from datetime import datetime, timezone
+import base64
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 import os
 from pathlib import Path
@@ -15,11 +16,12 @@ import pyodbc
 
 from app import snapshot_analysis as analysis, snapshot_batches as batches, scheduled_inspection as scheduled
 from app.auth import require_user
-from app.inspection import ScreenshotAnalysis
+from app.inspection import ScreenshotAnalysis, analyze_screenshot as real_analyze_screenshot
 from app.main import app
 from app.recognition_models import RecognitionCheck
 from app.recorder import RecorderSettings
-from app.vision_analysis import AnalysisError, RetryableAnalysisError
+from app.vision_analysis import AnalysisError, RetryableAnalysisError, VisionResponse
+from app.checking_rules import RuleValues
 
 
 @patch.dict(os.environ, {"SNAPSHOT_ANALYSIS_WORKER_ENABLED": "false"})
@@ -64,11 +66,11 @@ class SnapshotAnalysisTest(unittest.TestCase):
         analysis.process_item(self.queue, row)
         return row
 
-    def test_saved_image_time_and_stable_baseline_are_reused_without_recapture(self):
+    def test_saved_image_time_and_missing_previous_day_are_reused_without_recapture(self):
         item_id, path = self.enqueue()
         self.process()
-        self.analyze_screenshot.assert_called_once_with(self.image, self.captured, b"approved-baseline")
-        self.get_baseline_evidence.assert_called_once_with("Hong Kong", "001", "Channel 1 [stable-recorder]")
+        self.analyze_screenshot.assert_called_once_with(self.image, self.captured, previous_day=None, daily=True)
+        self.get_baseline_evidence.assert_not_called()
         record, image = self.save_record.call_args.args
         self.assertEqual((record.id, record.captured_at, image), (item_id, self.captured, self.image))
         reopened = analysis.AnalysisQueue(self.root)
@@ -79,6 +81,143 @@ class SnapshotAnalysisTest(unittest.TestCase):
         self.assertEqual((report.summary.total, report.summary.completed, report.summary.flagged), (1, 1, 1))
         self.assertEqual(report.items[0].record.id, item_id)
         self.assertEqual(report.items[0].record.captured_at, self.captured)
+
+    def test_previous_day_selection_uses_hong_kong_date_identity_and_latest_capture(self):
+        item_id, _ = self.enqueue()
+        older = self.captured - timedelta(days=1, hours=2)
+        latest = self.captured - timedelta(days=1)
+        for captured, key, channel, colour in (
+            (older, "ab" * 32, 1, "red"),
+            (latest, "ab" * 32, 1, "green"),
+            (latest + timedelta(hours=1), "cd" * 32, 1, "blue"),
+            (latest + timedelta(hours=1), "ab" * 32, 2, "blue"),
+            (self.captured - timedelta(hours=1), "ab" * 32, 1, "blue"),
+            (self.captured - timedelta(days=2), "ab" * 32, 1, "blue"),
+        ):
+            capture_id = uuid4()
+            path = self.root / f"{capture_id}.jpeg"
+            buffer = BytesIO()
+            Image.new("RGB", (32, 24), colour).save(buffer, "JPEG")
+            path.write_bytes(buffer.getvalue())
+            self.queue.register_capture(capture_id, path, key, channel, captured)
+        self.process()
+        comparison = self.queue.comparison(item_id)
+        self.assertIsNotNone(comparison)
+        self.assertEqual(comparison[0], latest)
+        self.assertEqual(self.analyze_screenshot.call_args.kwargs["previous_day"], comparison[1])
+        with Image.open(BytesIO(comparison[1])) as image:
+            red, green, blue = image.getpixel((0, 0))
+            self.assertGreater(green, max(red, blue))
+
+    def test_comparison_is_pinned_across_retry_and_unusable_latest_does_not_fall_back(self):
+        item_id, _ = self.enqueue()
+        older_id = uuid4()
+        older_path = self.root / f"{older_id}.jpeg"
+        older_path.write_bytes(self.image)
+        self.queue.register_capture(older_id, older_path, "ab" * 32, 1,
+                                    self.captured - timedelta(days=1, hours=1))
+        latest_id = uuid4()
+        path = self.root / f"{latest_id}.jpeg"
+        path.write_bytes(self.image)
+        self.queue.register_capture(latest_id, path, "ab" * 32, 1, self.captured - timedelta(days=1))
+        self.analyze_screenshot.side_effect = RetryableAnalysisError("Retry.")
+        self.process()
+        comparison = self.queue.comparison(item_id)
+        self.assertIsNotNone(comparison)
+        path.unlink()
+        self.analyze_screenshot.side_effect = None
+        with self.queue.connection() as db:
+            db.execute("UPDATE jobs SET available=0")
+        self.process()
+        self.assertEqual(self.queue.comparison(item_id), comparison)
+        self.assertEqual(self.analyze_screenshot.call_args.kwargs["previous_day"], comparison[1])
+
+        self.enqueue()
+        self.process()
+        self.assertIsNone(self.analyze_screenshot.call_args.kwargs["previous_day"])
+
+    def test_previous_day_boundary_is_hong_kong_midnight(self):
+        self.captured = datetime.fromisoformat("2026-11-25T16:01:00+00:00")
+        item_id, _ = self.enqueue()
+        for timestamp, colour in (
+            ("2026-11-24T15:59:59+00:00", "red"),
+            ("2026-11-24T16:00:00+00:00", "blue"),
+            ("2026-11-25T15:59:59+00:00", "green"),
+            ("2026-11-25T16:00:00+00:00", "red"),
+        ):
+            capture_id = uuid4()
+            path = self.root / f"{capture_id}.jpeg"
+            buffer = BytesIO()
+            Image.new("RGB", (32, 24), colour).save(buffer, "JPEG")
+            path.write_bytes(buffer.getvalue())
+            self.queue.register_capture(capture_id, path, "ab" * 32, 1, datetime.fromisoformat(timestamp))
+        self.process()
+        comparison = self.queue.comparison(item_id)
+        self.assertEqual(comparison[0], datetime.fromisoformat("2026-11-25T15:59:59+00:00"))
+
+    def test_historical_capture_only_batch_is_indexed_for_later_comparison(self):
+        report = self.api_setup(quantity=1)
+        report.auto_analyze = False
+        batches._write_report(self.root, report)
+        batches.index_capture_history(self.queue)
+        self.captured += timedelta(days=1)
+        item_id, _ = self.enqueue()
+        with self.queue.connection() as db:
+            key = report.recorder_keys[report.items[0].recorder_index]
+            row = db.execute("SELECT input FROM jobs WHERE id=?", (str(item_id),)).fetchone()
+            entry = analysis.AnalysisInput.model_validate_json(row["input"])
+            entry.recorder_key = key
+            db.execute("UPDATE jobs SET input=? WHERE id=?", (entry.model_dump_json(), str(item_id)))
+        self.process()
+        self.assertEqual(self.queue.comparison(item_id)[0], report.items[0].captured_at)
+
+    def test_comparison_endpoints_return_pinned_evidence_or_404(self):
+        item_id, _ = self.enqueue()
+        prior = uuid4()
+        path = self.root / f"{prior}.jpeg"
+        path.write_bytes(self.image)
+        self.queue.register_capture(prior, path, "ab" * 32, 1, self.captured - timedelta(days=1))
+        self.process()
+        settings = RecorderSettings(_env_file=None, snapshot_dir=self.root, dahau_password="test-only")
+        app.dependency_overrides[require_user] = lambda: "operator"
+        self.addCleanup(app.dependency_overrides.pop, require_user, None)
+        with patch("app.recognition.RecorderSettings", return_value=settings), patch(
+            "app.recognition.repository.get_record", return_value=self.save_record.call_args.args[0],
+        ), TestClient(app) as client:
+            meta = client.get(f"/api/recognitions/{item_id}/comparison")
+            evidence = client.get(f"/api/recognitions/{item_id}/comparison/evidence")
+            self.assertEqual(meta.status_code, 200)
+            self.assertEqual(datetime.fromisoformat(meta.json()["captured_at"]),
+                             self.captured - timedelta(days=1))
+            self.assertEqual(evidence.content, self.queue.comparison(item_id)[1])
+            self.assertEqual(evidence.headers["cache-control"], "no-store")
+            self.assertEqual(client.get(f"/api/recognitions/{uuid4()}/comparison").status_code, 404)
+
+    def test_analysis_sends_and_persists_the_exact_two_review_images(self):
+        item_id, _ = self.enqueue()
+        previous = uuid4()
+        path = self.root / f"{previous}.jpeg"
+        path.write_bytes(self.image)
+        self.queue.register_capture(previous, path, "ab" * 32, 1, self.captured - timedelta(days=1))
+        explanation = {"en": "View changed.", "zh_hant": "畫面改變。", "zh_hans": "画面改变。"}
+        response = VisionResponse.model_validate({
+            "signal": {"status": "pass", "explanation": explanation},
+            "scene": {"status": "flagged", "explanation": explanation},
+            "timestamp": {"state": "missing", "reading": None, "comparison": "not_assessed"},
+        })
+        self.analyze_screenshot.side_effect = real_analyze_screenshot
+        with patch.dict(os.environ, {"VISION_API_KEY": "test-key"}), patch(
+            "app.vision_analysis.load_checking_rules", return_value=RuleValues(),
+        ), patch("app.vision_analysis._request", return_value=response) as request:
+            self.process()
+        record, saved_image = self.save_record.call_args.args
+        self.assertEqual(record.analyzer_version, "vision-llm-daily-v1")
+        self.assertEqual(record.outcome, "flagged")
+        self.assertEqual(saved_image, self.image)
+        content = request.call_args.args[1]
+        images = [base64.b64decode(part["image_url"]["url"].split(",", 1)[1])
+                  for part in content if part["type"] == "image_url"]
+        self.assertEqual(images, [saved_image, self.queue.comparison(item_id)[1]])
 
     def test_sql_failure_reuses_cached_analysis_on_retry(self):
         self.enqueue()
@@ -164,7 +303,7 @@ class SnapshotAnalysisTest(unittest.TestCase):
         lock = Lock()
         active = maximum = count = 0
 
-        def model(*args):
+        def model(*args, **kwargs):
             nonlocal active, maximum, count
             with lock:
                 active += 1

@@ -47,6 +47,10 @@ export interface Baseline {
   approved_at: string
 }
 
+export interface Comparison {
+  captured_at: string
+}
+
 export interface RecognitionPage {
   records: RecognitionRecord[]
   total: number
@@ -570,6 +574,16 @@ export function saveReview(id: string, status: ReviewStatus, note: string) {
 
 export function evidenceUrl(id: string) {
   return `/api/recognitions/${id}/evidence`
+}
+
+export function comparisonEvidenceUrl(id: string) {
+  return `/api/recognitions/${encodeURIComponent(id)}/comparison/evidence`
+}
+
+export function fetchComparison(id: string, signal: AbortSignal) {
+  return request(`/api/recognitions/${encodeURIComponent(id)}/comparison`, (value): value is Comparison =>
+    isObject(value) && typeof value.captured_at === 'string' &&
+    Number.isFinite(Date.parse(value.captured_at)), { signal, cache: 'no-store' })
 }
 
 export function burstFrameUrl(id: string, index: number) {

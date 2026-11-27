@@ -154,17 +154,23 @@ def _capture_channels(recorder: Recorder, recorder_id: str, shop: str, region: s
             captured_at = _utc_now()
             evidence = prepare_screenshot(image)
             present.add(channel)
-            save_snapshot(snapshot_dir, run_date, recorder_id, channel, evidence)
+            path = save_snapshot(snapshot_dir, run_date, recorder_id, channel, evidence)
             _execute(
                 "UPDATE dbo.inspection_run_items SET status=?, captured_at=?, evidence=? WHERE id=?",
                 "completed", _db_time(captured_at), pyodbc.Binary(evidence), str(item_id),
             )
+            key = recorder_key(shop, region, recorder.base)
+            try:
+                AnalysisQueue(snapshot_dir).register_capture(item_id, path, key, channel, captured_at)
+            except QueueError as error:
+                logger.error("Scheduled snapshot saved but history indexing failed for %s: %s", item_id, error)
+                _execute("UPDATE dbo.inspection_run_items SET message=? WHERE id=?",
+                         f"Snapshot saved, but comparison history could not be indexed: {error}"[:1000], str(item_id))
             if analyze:
                 try:
                     AnalysisQueue(snapshot_dir).enqueue(
-                        f"scheduled:{run_date}", item_id,
-                        snapshot_dir / run_date.isoformat() / recorder_id / f"channel-{channel:03d}.jpeg",
-                        shop, region, channel, captured_at, camera_name=name,
+                        f"scheduled:{run_date}", item_id, path, shop, region, channel, captured_at,
+                        recorder_key=key, camera_name=name,
                     )
                 except QueueError as error:
                     logger.error("Scheduled snapshot saved but AI enqueue failed for %s: %s", item_id, error)
