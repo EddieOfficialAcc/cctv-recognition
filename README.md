@@ -162,16 +162,13 @@ SQL Server on Linux uses the same SQL Server protocol as Windows. Install
 Microsoft ODBC Driver 18 for SQL Server on the backend machine (Driver 17 also
 works when selected with `DB_DRIVER`).
 
-Copy `backend/.env.example` to `backend/.env` and fill in the SQL Server host,
-database, SQL login and password. The local file is ignored by Git and excluded
-from the Docker image. Never place credentials in frontend code. Environment
-variables override the file; it is loaded independently of the working directory.
+Create `backend/.env` and set the SQL Server host, database, SQL login and
+password. The local file is ignored by Git and excluded from the Docker image.
+Never place credentials in frontend code. Environment variables override the
+file; it is loaded independently of the working directory.
 
 ```powershell
-# From the project root, if backend\.env does not already exist:
-Copy-Item backend\.env.example backend\.env
-
-# After filling in backend\.env:
+# From the project root, after creating and filling in backend\.env:
 Set-Location backend
 .\.venv\Scripts\python -m app.database
 ```
@@ -202,11 +199,11 @@ Keep the SSH terminal open; enter its password interactively. Inside Docker,
 
 ## Screenshot recognition & records
 
-Configure `VISION_API_KEY` in `backend\.env` with a rotated key. The default
-`VISION_ENDPOINT` and `VISION_DEPLOYMENT` are listed in `backend\.env.example`;
-override them if necessary. The backend uses the OpenAI-compatible chat
-completions API and requires the deployment to support image inputs and JSON
-responses. Never put the key in frontend code or commit it to Git.
+Configure `VISION_API_KEY` in `backend\.env` with a rotated key. Set
+`VISION_ENDPOINT` and `VISION_DEPLOYMENT` there as needed. The backend uses the
+OpenAI-compatible chat completions API and requires the deployment to support
+image inputs and JSON responses. Never put the key in frontend code or commit it
+to Git.
 
 Each upload sends the image, any additional burst frames, and the matching
 approved baseline (if present) to the configured vision service. Confirm your
@@ -453,9 +450,9 @@ sudo install -d -o "$USER" -m 700 /opt/cctv-recognition
 sudo install -d -o "$USER" -m 700 /opt/cctv-recognition/releases
 umask 077
 if [ ! -e /opt/cctv-recognition/backend.env ]; then
-  cp backend/.env.example /opt/cctv-recognition/backend.env
+  install -m 600 /dev/null /opt/cctv-recognition/backend.env
 fi
-# Edit /opt/cctv-recognition/backend.env privately.
+# Configure /opt/cctv-recognition/backend.env privately before deployment.
 ```
 
 Set `DB_HOST=sqlserver-db`, `DB_PORT=1433`, and the database name and dedicated
