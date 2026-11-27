@@ -265,7 +265,7 @@ success-shaped result.
 ### Checking rules
 
 Open **Checking rules** to view the shared signal criteria, scene criteria,
-timestamp location and allowed clock drift. Choose **Edit rules**, make changes,
+preferred timestamp corner and allowed clock drift. Choose **Edit rules**, make changes,
 then **Save rules**. Criteria are sent to the vision model as written; do not
 include secrets. **Reset draft to defaults** only changes the editor until saved.
 Concurrent changes are rejected rather than overwriting another operator's
@@ -283,7 +283,7 @@ archive (`SCHEDULED_INSPECTION_SNAPSHOT_DIR`). The backend automatically creates
 the local SQLite table; no additional SQL Server schema setup is required.
 Keep this file with the persistent archive when deploying or backing up.
 Before the first save, defaults use the current criteria, upper-right
-timestamp location and `VISION_DRIFT_SECONDS` threshold (180 seconds unless
+preferred timestamp corner and `VISION_DRIFT_SECONDS` threshold (180 seconds unless
 configured otherwise). Saved rules take precedence over that environment
 threshold. Fixed safeguards remain: uncertain timestamp readings and missing
 capture times never pass, LLM/server disagreements require manual review,
@@ -337,13 +337,15 @@ The comparison image is selected once and retained across retries.
 
 ### Timestamp verification
 
-The vision model checks the timestamp location selected in **Checking rules**
-(upper-right by default) in the current screenshot for
-presence and readability and reads its date and time; no separate OCR library
-is used. In the same call, the LLM receives the actual snapshot capture time
-normalized to Hong Kong time (UTC+8), allowed drift and 60-second uncertainty
-band. It compares the full visible date and time against this reference and
-returns `within`, `outside` or `not_assessed`. Capture metadata must never be
+The vision model checks the preferred corner selected in **Checking rules**
+(upper-right by default) in the current screenshot first. If no camera timestamp
+overlay is found there, it also checks the other corners, including the upper-left
+used by some Hikvision cameras. Conflicting or uncertain overlays are not
+assessed. No separate OCR library is used. In the same call, the LLM receives
+the actual snapshot capture time normalized to Hong Kong time (UTC+8), allowed
+drift and 60-second uncertainty band. It compares the full visible date and
+time against this reference and returns `within`, `outside` or `not_assessed`.
+Capture metadata must never be
 used to guess unreadable digits. Upload time is never substituted.
 
 The backend independently validates the normalized `YYYY-MM-DD HH:MM:SS`

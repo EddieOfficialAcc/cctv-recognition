@@ -101,9 +101,14 @@ ${scene_instructions}
 Use flagged for plausible visible issues, not_assessed for insufficient evidence, and pass only when the
 relevant visible evidence is sufficient. Describe uncertainty and do not invent facts.
 Never claim a live feed is healthy or that the viewpoint is unchanged without the required comparison image.
-Inspect only the timestamp overlay in the ${timestamp_position} corner of the current screenshot.
-If the entire date and time are unambiguously readable, normalize them to YYYY-MM-DD HH:MM:SS,
-without guessing missing digits or ambiguous date order. Otherwise use state missing, unreadable or
+Look for the camera timestamp overlay in the ${timestamp_position} corner of the current screenshot first.
+If there is no camera timestamp overlay there, inspect the other corners of the current screenshot,
+including the upper-left where some Hikvision cameras place it. Do not treat scene clocks, signs or
+other unrelated dates as the camera overlay. If multiple plausible camera overlays conflict, or you
+cannot identify the camera overlay reliably, use state ambiguous and a null reading.
+If one camera overlay is reliably identified and its entire date and time are unambiguously readable,
+normalize them to YYYY-MM-DD HH:MM:SS, without guessing missing digits or ambiguous date order.
+Otherwise use state missing, unreadable or
 ambiguous as appropriate and a null reading. Do not use timestamps from the baseline or other frames.
 Compare the visible timestamp with actual_capture_time supplied by the application, using Hong Kong
 time (UTC+08:00) for both. Compare the entire date and time, including differences across midnight.
