@@ -35,7 +35,10 @@ be verified before enabling capture. The health endpoint checks the API
 process, not any camera or database.
 
 The authenticated **Camera configuration** tab displays a read-only,
-paginated selection of current `dbo.cctv_config` fields for all brands.
+paginated selection of current `dbo.cctv_config` fields for all brands. Brand,
+region and company filters can be combined; they filter the database before
+pagination. This tab reads the existing table and does not import or sync the
+workbook.
 Use **Refresh** to reload it; the tab does not poll automatically. It shows
 only whether both credentials are present, never the username or password.
 The application database login requires SELECT permission on `dbo.cctv_config`.

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { fetchCameraConfiguration, type CameraBrandFilter, type CameraConfigurationPage, type SnapshotRecorder } from '../api'
+import { fetchCameraConfiguration, type CameraBrandFilter, type CameraCompanyFilter, type CameraConfigurationPage, type Region, type SnapshotRecorder } from '../api'
 import { useLocale } from '../localization'
 import { Icon } from './Icon'
 import { ManualSnapshot } from './ManualSnapshot'
@@ -9,6 +9,8 @@ export function CameraConfiguration() {
   const [data, setData] = useState<CameraConfigurationPage | null>(null)
   const [page, setPage] = useState(1)
   const [brand, setBrand] = useState<CameraBrandFilter>('')
+  const [region, setRegion] = useState<'' | Region>('')
+  const [company, setCompany] = useState<CameraCompanyFilter>('')
   const [refresh, setRefresh] = useState(0)
   const [updated, setUpdated] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -17,7 +19,7 @@ export function CameraConfiguration() {
 
   useEffect(() => {
     const controller = new AbortController()
-    void fetchCameraConfiguration(page, controller.signal, brand).then(result => {
+    void fetchCameraConfiguration(page, controller.signal, brand, region, company).then(result => {
       if (controller.signal.aborted) return
       const lastPage = Math.max(1, Math.ceil(result.total / result.page_size))
       if (page > lastPage) { setPage(lastPage); return }
@@ -31,7 +33,7 @@ export function CameraConfiguration() {
       setLoading(false)
     })
     return () => controller.abort()
-  }, [page, refresh, brand])
+  }, [page, refresh, brand, region, company])
 
   function reload() {
     setLoading(true)
@@ -79,6 +81,41 @@ export function CameraConfiguration() {
             <option value="HIKVISION">HIKVISION</option>
           </select>
         </label>
+        <label><span className="sr-only">{t('filterRegion')}</span>
+          <select value={region} onChange={event => {
+            const next = event.target.value
+            if (next !== '' && next !== 'Hong Kong' && next !== 'Macau') return
+            if (next === region) return
+            setData(null)
+            changePage(1)
+            setRegion(next)
+          }}>
+            <option value="">{t('allRegions')}</option>
+            <option value="Hong Kong">{t('hongKong')}</option>
+            <option value="Macau">{t('macau')}</option>
+          </select>
+        </label>
+        <label><span className="sr-only">{t('configurationFilterCompany')}</span>
+          <select value={company} onChange={event => {
+            const next = event.target.value
+            if (next !== '' && next !== 'BestMart360' && next !== 'FoodVilla') return
+            if (next === company) return
+            setData(null)
+            changePage(1)
+            setCompany(next)
+          }}>
+            <option value="">{t('configurationAllCompanies')}</option>
+            <option value="BestMart360">BestMart360</option>
+            <option value="FoodVilla">FoodVilla</option>
+          </select>
+        </label>
+        {(brand || region || company) && <button className="text-button" onClick={() => {
+          setData(null)
+          changePage(1)
+          setBrand('')
+          setRegion('')
+          setCompany('')
+        }}>{t('reset')}</button>}
       </div>
       <div className="table-container" aria-busy={loading}>
         {loading ? <div className="empty-state" role="status">{t('loadingTitle')}</div> :

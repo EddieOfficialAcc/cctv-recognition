@@ -162,6 +162,39 @@ class CameraConfigurationTest(unittest.TestCase):
                 self.assertIn("WHERE brand = ? ORDER BY", rows.args[0])
                 self.assertEqual(rows.args[1:], (brand, 2, 2))
 
+    def test_company_and_region_filters_combine_with_brand_before_pagination(self) -> None:
+        app.dependency_overrides[require_user] = lambda: "operator"
+        self.addCleanup(app.dependency_overrides.pop, require_user, None)
+        connection = MagicMock()
+        cursor = connection.cursor.return_value
+        cursor.execute.return_value.fetchone.return_value = (1,)
+        cursor.execute.return_value.fetchall.return_value = [
+            ("M07", "Shop", "BestMart360", "Macau", "DAHAU", None, None, 2, 0),
+        ]
+        with patch("app.camera_configuration.DatabaseSettings"), patch(
+            "app.camera_configuration.connect", return_value=connection,
+        ):
+            response = self.client.get(
+                "/api/camera-configuration?brand=DAHAU&region=Macau&company=BestMart360&page=2&page_size=2"
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["total"], 1)
+        count, rows = cursor.execute.call_args_list
+        predicate = "WHERE brand = ? AND region = ? AND company = ?"
+        self.assertIn(predicate, count.args[0])
+        self.assertIn(predicate, rows.args[0])
+        self.assertEqual(count.args[1:], ("DAHAU", "Macau", "BestMart360"))
+        self.assertEqual(rows.args[1:], ("DAHAU", "Macau", "BestMart360", 2, 2))
+
+    def test_invalid_new_filters_are_rejected(self) -> None:
+        app.dependency_overrides[require_user] = lambda: "operator"
+        self.addCleanup(app.dependency_overrides.pop, require_user, None)
+        for query in ("region=invalid", "company=invalid"):
+            with self.subTest(query=query), patch(
+                "app.camera_configuration.connect", side_effect=AssertionError("unexpected database access")
+            ):
+                self.assertEqual(self.client.get(f"/api/camera-configuration?{query}").status_code, 422)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -303,10 +303,15 @@ export function saveCheckingRules(values: RuleValues, revision: number) {
 }
 
 export type CameraBrandFilter = '' | 'DAHAU' | 'HIKVISION'
+export type CameraCompanyFilter = '' | 'BestMart360' | 'FoodVilla'
 
-export function fetchCameraConfiguration(page: number, signal: AbortSignal, brand: CameraBrandFilter) {
+export function fetchCameraConfiguration(
+  page: number, signal: AbortSignal, brand: CameraBrandFilter, region: '' | Region, company: CameraCompanyFilter,
+) {
   const params = new URLSearchParams({ page: String(page), page_size: '20' })
   if (brand) params.set('brand', brand)
+  if (region) params.set('region', region)
+  if (company) params.set('company', company)
   return request(`/api/camera-configuration?${params}`, isCameraConfigurationPage, { signal, cache: 'no-store' })
 }
 

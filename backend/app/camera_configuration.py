@@ -72,22 +72,27 @@ def list_camera_configuration(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
     brand: Literal["DAHAU", "HIKVISION"] | None = None,
+    region: Literal["Hong Kong", "Macau"] | None = None,
+    company: Literal["BestMart360", "FoodVilla"] | None = None,
 ) -> CameraConfigurationPage:
     response.headers["Cache-Control"] = "no-store"
-    brand_filter = " WHERE brand = ?" if brand is not None else ""
-    brand_parameters = (brand,) if brand is not None else ()
+    filters = [(column, value) for column, value in (
+        ("brand", brand), ("region", region), ("company", company),
+    ) if value is not None]
+    where = " WHERE " + " AND ".join(f"{column} = ?" for column, _ in filters) if filters else ""
+    parameters = tuple(value for _, value in filters)
     with closing(connect(DatabaseSettings())) as connection:
         with closing(connection.cursor()) as cursor:
             total = cursor.execute(
-                f"SELECT COUNT(*) FROM dbo.cctv_config{brand_filter}", *brand_parameters,
+                f"SELECT COUNT(*) FROM dbo.cctv_config{where}", *parameters,
             ).fetchone()[0]
             rows = cursor.execute(
                 "SELECT shop_code, shop_name, company, region, brand, internal_ip, port, cam_qty, "
                 "CASE WHEN NULLIF(LTRIM(RTRIM(admin_name)), '') IS NOT NULL "
                 "AND NULLIF(LTRIM(RTRIM(admin_password)), '') IS NOT NULL THEN 1 ELSE 0 END "
-                f"FROM dbo.cctv_config{brand_filter} ORDER BY shop_code "
+                f"FROM dbo.cctv_config{where} ORDER BY shop_code "
                 "OFFSET ? ROWS FETCH NEXT ? ROWS ONLY",
-                *brand_parameters, (page - 1) * page_size, page_size,
+                *parameters, (page - 1) * page_size, page_size,
             ).fetchall()
     return CameraConfigurationPage(
         rows=[
