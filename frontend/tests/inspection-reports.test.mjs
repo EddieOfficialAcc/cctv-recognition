@@ -218,6 +218,32 @@ test('inspection reports exposes bulk capture and run selection in all locales',
       assert.match(activeProgress, /disabled=""/)
       assert.match(activeProgress, /Dahua/)
       assert.match(activeProgress, /Hikvision/)
+      const brandProgress = renderToStaticMarkup(React.createElement(Provider, null,
+        React.createElement(InspectionProgress, {
+          manual: true, onStop() {}, run: {
+            id: 'scheduled-batch', schedule_name: 'Scheduled', run_date: '2026-11-26', status: 'running',
+            started_at: null, finished_at: null, total: 1439, completed: 124, failed: 52, skipped: 0,
+            interrupted: 0, saved: 124, stopped: 1261, capture_brands: ['DAHAU', 'HIKVISION'],
+            stop_requested: ['HIKVISION'], brand_progress: [
+              { brand: 'DAHAU', total: 3, completed: 1, failed: 0, skipped: 0, interrupted: 0, stopped: 0, saved: 1 },
+              { brand: 'HIKVISION', total: 1436, completed: 123, failed: 52, skipped: 0, interrupted: 0, stopped: 1261, saved: 123 },
+            ],
+          },
+        })))
+      assert.match(brandProgress, /<progress max="3" value="1"[^>]*Dahua/)
+      assert.match(brandProgress, /<progress max="1436" value="175"[^>]*Hikvision/)
+      assert.match(brandProgress, /1261/)
+      assert.match(brandProgress, /disabled=""/)
+      const unknownProgress = renderToStaticMarkup(React.createElement(Provider, null,
+        React.createElement(InspectionProgress, {
+          manual: true, run: {
+            id: 'old-batch', run_date: '2026-11-26', status: 'completed', started_at: null, finished_at: null,
+            total: 2, completed: 1, failed: 1, skipped: 0, interrupted: 0, saved: 1,
+            brand_progress: [{ brand: 'UNKNOWN', total: 2, completed: 1, failed: 1, skipped: 0, interrupted: 0, stopped: 0, saved: 1 }],
+          },
+        })))
+      assert.match(unknownProgress, /<progress max="2" value="2"/)
+      assert.doesNotMatch(unknownProgress, /Dahua|Hikvision/)
       const details = renderToStaticMarkup(React.createElement(Provider, null,
         React.createElement(SnapshotBatchReportDetails, { report: {
           id: 'test-batch', status: 'completed', started_at: '2026-11-26T06:00:00Z',
@@ -246,10 +272,13 @@ test('inspection reports exposes bulk capture and run selection in all locales',
       return Response.json(url.includes('/exclusion') ? { skip: true } : {
         id: 'new-batch', run_date: '2026-11-26', status: 'running', started_at: null, finished_at: null,
         total: 3, completed: 0, failed: 0, skipped: 0, interrupted: 0, saved: 0,
+        brand_progress: [{ brand: 'DAHAU', total: 3, completed: 0, failed: 0, skipped: 0,
+          interrupted: 0, stopped: 0, saved: 0 }],
       })
 
     }
-    await api.startSnapshotBatch(true)
+    const started = await api.startSnapshotBatch(true)
+    assert.equal(started.brand_progress[0].brand, 'DAHAU')
     await api.startSnapshotBatch(false, 'HIKVISION')
     await api.startSnapshotBatch(false, 'DAHAU')
     await api.setSnapshotChannelExcluded('previous-batch', 'channel-item', true)
@@ -286,6 +315,8 @@ test('inspection reports exposes bulk capture and run selection in all locales',
     await assert.rejects(api.startSnapshotBatch(false), { code: 'batchNoRecorders' })
     globalThis.fetch = async () => Response.json({ detail: 'No recorders match the selected brand for batch capture.' }, { status: 422 })
     await assert.rejects(api.startSnapshotBatch(false, 'HIKVISION'), { code: 'batchNoRecorders' })
+    globalThis.fetch = async () => Response.json({ ...started, brand_progress: [{ ...started.brand_progress[0], saved: '1' }] })
+    await assert.rejects(api.startSnapshotBatch(false), { code: 'responseError' })
   } finally {
     globalThis.fetch = oldFetch
     if (oldStorage === undefined) delete globalThis.localStorage

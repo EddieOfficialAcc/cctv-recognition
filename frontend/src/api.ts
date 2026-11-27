@@ -78,6 +78,17 @@ export interface CameraConfigurationPage {
   page_size: number
 }
 
+export interface BrandProgress {
+  brand: Exclude<CameraBrandFilter, ''> | 'UNKNOWN'
+  total: number
+  completed: number
+  failed: number
+  skipped: number
+  interrupted: number
+  stopped: number
+  saved: number
+}
+
 export interface InspectionRun {
   id?: string
   error?: string
@@ -96,6 +107,7 @@ export interface InspectionRun {
   stopped?: number
   capture_brands?: Array<Exclude<CameraBrandFilter, ''>>
   stop_requested?: Array<Exclude<CameraBrandFilter, ''>>
+  brand_progress?: BrandProgress[]
 }
 
 export interface InspectionItem {
@@ -189,6 +201,10 @@ function isInspectionRun(value: unknown): value is InspectionRun {
 function isSnapshotBatch(value: unknown): value is InspectionRun & { id: string } {
   return isInspectionRun(value) && typeof value.id === 'string' &&
     (value.stopped === undefined || typeof value.stopped === 'number') &&
+    (value.brand_progress === undefined || (Array.isArray(value.brand_progress) && value.brand_progress.every(group =>
+      isObject(group) && ['DAHAU', 'HIKVISION', 'UNKNOWN'].includes(String(group.brand)) &&
+      ['total', 'completed', 'failed', 'skipped', 'interrupted', 'stopped', 'saved']
+        .every(key => typeof group[key] === 'number')))) &&
     ['capture_brands', 'stop_requested'].every(key => {
       const brands = value[key as 'capture_brands' | 'stop_requested']
       return brands === undefined || (Array.isArray(brands) && brands.every(brand => brand === 'DAHAU' || brand === 'HIKVISION'))

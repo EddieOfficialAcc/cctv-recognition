@@ -15,14 +15,40 @@ export function InspectionProgress({ run, manual, onViewReport, onStop, stopBusy
 }) {
   const { t } = useLocale()
   const id = run.id
-  const processed = run.completed + run.failed + run.skipped + (run.stopped ?? 0)
+  const processed = run.completed + run.failed + run.skipped
   return <div className="worker-panel-body">
-    <label>{t('captureProgress', { done: processed, total: run.total })}
-      <progress max={Math.max(1, run.total)} value={processed} aria-label={t('captureProgressLabel')} />
-    </label>
-    <p role="status">{t('captureSaved', { count: run.saved })}</p>
-    {Boolean(run.stopped) && <p role="status">{t('captureStoppedCount', { count: run.stopped ?? 0 })}</p>}
-    {manual && run.status === 'running' && onStop && <div className="configuration-actions">
+    {run.brand_progress?.length ? <div className="capture-brand-progress">
+      {run.brand_progress.map(group => {
+        const name = group.brand === 'DAHAU' ? 'Dahua' : group.brand === 'HIKVISION' ? 'Hikvision' : t('captureBrandUnknown')
+        const done = group.completed + group.failed + group.skipped
+        const requested = group.brand !== 'UNKNOWN' && (run.stop_requested?.includes(group.brand) ?? false)
+        const canStop = group.brand !== 'UNKNOWN' && manual && run.status === 'running' &&
+          onStop && run.capture_brands?.includes(group.brand)
+        return <section className="capture-brand-card" key={group.brand} aria-label={name}>
+          <div className="capture-brand-heading"><strong>{name}</strong>
+            <span>{t('captureProgress', { done, total: group.total })}</span></div>
+          <progress max={Math.max(1, group.total)} value={done}
+            aria-label={t('captureBrandProgressLabel', { brand: name })} />
+          <p role="status">{t('captureBrandCounts', {
+            saved: group.saved, failed: group.failed, skipped: group.skipped,
+            stopped: group.stopped, interrupted: group.interrupted,
+          })}</p>
+          {group.brand === 'UNKNOWN' && <p className="field-hint">{t('captureBrandUnknownHint')}</p>}
+          {canStop && group.brand !== 'UNKNOWN' && <button className="button secondary" disabled={stopBusy || requested}
+            onClick={() => onStop(group.brand === 'HIKVISION' ? 'HIKVISION' : 'DAHAU')}>
+            {t(requested ? 'captureStoppingBrand' : 'captureStopBrand', { brand: name })}
+          </button>}
+        </section>
+      })}
+    </div> : <>
+      <label>{t('captureProgress', { done: processed, total: run.total })}
+        <progress max={Math.max(1, run.total)} value={processed} aria-label={t('captureProgressLabel')} />
+      </label>
+      <p role="status">{t('captureSaved', { count: run.saved })}</p>
+      {Boolean(run.stopped) && <p role="status">{t('captureStoppedCount', { count: run.stopped ?? 0 })}</p>}
+      <p className="field-hint">{t('captureBrandUnknownHint')}</p>
+    </>}
+    {!run.brand_progress?.length && manual && run.status === 'running' && onStop && <div className="configuration-actions">
       {run.capture_brands?.map(brand => {
         const requested = run.stop_requested?.includes(brand) ?? false
         const name = brand === 'DAHAU' ? 'Dahua' : 'Hikvision'

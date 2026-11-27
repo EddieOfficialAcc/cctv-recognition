@@ -74,7 +74,11 @@ can also be downloaded in the browser.
 
 For a running batch, **Inspection center** can stop capture separately for each
 brand. The current capture and download finish; unstarted channels for that
-brand are marked stopped, while the other brand continues. Stopping AI review
+brand are marked stopped, while the other brand continues. The selected manual
+or scheduled batch displays progress and outcome counts separately by brand.
+Stopped and interrupted items do not count as processed; older items without
+recorded brand information are shown separately rather than guessed. No new
+SQL Server tables are needed. Stopping AI review
 applies only to the selected batch or daily run: all reviews already in flight
 finish, and queued or newly captured snapshots wait until review is resumed.
 Saved snapshots and completed results are retained. Stopping one scheduled

@@ -36,6 +36,17 @@ from app.snapshot_analysis_api import require_vision
 logger = logging.getLogger(__name__)
 
 
+class BrandProgress(BaseModel):
+    brand: Literal["DAHAU", "HIKVISION", "UNKNOWN"]
+    total: int
+    completed: int
+    failed: int
+    skipped: int
+    interrupted: int
+    stopped: int
+    saved: int
+
+
 class BatchRun(Run):
     id: UUID
     error: str = ""
@@ -44,6 +55,7 @@ class BatchRun(Run):
     stopped: int = 0
     capture_brands: list[Literal["DAHAU", "HIKVISION"]] = Field(default_factory=list)
     stop_requested: list[Literal["DAHAU", "HIKVISION"]] = Field(default_factory=list)
+    brand_progress: list[BrandProgress] = Field(default_factory=list)
 
 
 class BatchReport(BaseModel):
@@ -65,12 +77,25 @@ class BatchReport(BaseModel):
                   for status in ("completed", "failed", "skipped", "interrupted", "stopped")}
         brands = sorted({self.recorder_brands[item.recorder_index] for item in self.items
                          if item.status in ("pending", "capturing") and item.recorder_index in self.recorder_brands})
+        groups: dict[str, list[Item]] = {}
+        for item in self.items:
+            brand = self.recorder_brands.get(item.recorder_index, "UNKNOWN")
+            groups.setdefault(brand, []).append(item)
+        progress = [
+            BrandProgress(
+                brand=brand, total=len(items), saved=sum(item.has_evidence for item in items),
+                **{status: sum(item.status == status for item in items)
+                   for status in ("completed", "failed", "skipped", "interrupted", "stopped")},
+            )
+            for brand in ("DAHAU", "HIKVISION", "UNKNOWN")
+            if (items := groups.get(brand))
+        ]
         return BatchRun(
             id=self.id, run_date=self.started_at.astimezone(HONG_KONG).date(),
             status=self.status, started_at=self.started_at, finished_at=self.finished_at,
             total=len(self.items), saved=sum(item.has_evidence for item in self.items),
             error=self.error, analysis_error=self.analysis_error, schedule_name=self.schedule_name,
-            capture_brands=brands, **counts,
+            capture_brands=brands, brand_progress=progress, **counts,
         )
 
 
@@ -200,6 +225,12 @@ def _plan_batch(password: str, root: Path | None = None,
         else:
             shop, region, address, quantity = row[:4]
             brand, username, db_password = "DAHAU", "admin", ""
+        if isinstance(brand, str):
+            normalized_brand = brand.strip().upper()
+            if normalized_brand == "DAHAU":
+                report.recorder_brands[index] = "DAHAU"
+            elif normalized_brand == "HIKVISION":
+                report.recorder_brands[index] = "HIKVISION"
         shop, region = (shop or "").strip(), (region or "").strip()
         message = ""
         excluded: dict[int, str] = {}

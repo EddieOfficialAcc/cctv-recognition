@@ -105,6 +105,40 @@ class SnapshotBatchesTest(unittest.TestCase):
             future.result(timeout=5)
         self.assertEqual(batches._read_report(self.root, report.id).summary().completed, 3)
 
+    def test_batch_progress_splits_brands_and_preserves_unknown_legacy_items(self) -> None:
+        self._eligible_recorders.return_value = [
+            ("001", "Hong Kong", "192.0.2.1:81", 3, "DAHAU", "admin", "test-only"),
+            ("002", "Hong Kong", "192.0.2.2:81", 3, "HIKVISION", "admin", "test-only"),
+            ("003", "Hong Kong", None, 1, "HIKVISION", "admin", "test-only"),
+        ]
+        report, _ = batches._plan_batch("test-only", self.root)
+        for item, status in zip(report.items, (
+            "completed", "failed", "stopped", "pending", "capturing", "interrupted", "skipped",
+        )):
+            item.status = status
+        report.items[0].has_evidence = True
+        report.schedule_name = "Scheduled test"
+        batches._write_report(self.root, report)
+        legacy = report.model_copy(deep=True, update={"id": uuid4(), "recorder_brands": {}})
+        batches._write_report(self.root, legacy)
+        partial = report.model_copy(deep=True, update={"id": uuid4(), "recorder_brands": {1: "DAHAU"}})
+        batches._write_report(self.root, partial)
+        with TestClient(app) as client, patch("app.snapshot_batches._acquire_lock", return_value=None):
+            runs = {run["id"]: run for run in client.get("/api/snapshot-batches").json()}
+        progress = runs[str(report.id)]["brand_progress"]
+        self.assertEqual(progress, [
+            {"brand": "DAHAU", "total": 3, "completed": 1, "failed": 1, "skipped": 0,
+             "interrupted": 0, "stopped": 1, "saved": 1},
+            {"brand": "HIKVISION", "total": 4, "completed": 0, "failed": 0, "skipped": 1,
+             "interrupted": 1, "stopped": 0, "saved": 0},
+        ])
+        self.assertEqual(runs[str(report.id)]["schedule_name"], "Scheduled test")
+        unknown = runs[str(legacy.id)]["brand_progress"]
+        self.assertEqual([(group["brand"], group["total"]) for group in unknown], [("UNKNOWN", 7)])
+        self.assertEqual([(group["brand"], group["total"]) for group in runs[str(partial.id)]["brand_progress"]],
+                         [("DAHAU", 3), ("UNKNOWN", 4)])
+        self.assertEqual(sum(group["total"] for group in progress), runs[str(report.id)]["total"])
+
     def test_stop_one_brand_finishes_active_capture_and_continues_other_brand(self) -> None:
         self._eligible_recorders.return_value = [
             ("001", "Hong Kong", "192.0.2.1:81", 2, "DAHAU", "admin", "test-only"),
