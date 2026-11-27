@@ -10,7 +10,8 @@ Vite and Tailwind CSS frontend and a Python FastAPI backend.
 - `backend/app/` - FastAPI application.
 - `backend/tests/` - backend tests.
 
-The interface opens on **Monitoring overview**, centered on periodic,
+The Best Mart 360-inspired interface keeps RetailVision as the product name.
+It opens on **Monitoring overview**, centered on periodic,
 LLM-powered camera inspections: schedule fresh DAHAU snapshots, inspect them
 with the configured vision model, then review the findings. The overview
 refreshes service readiness, enabled schedules, the next planned check (Hong
@@ -18,10 +19,13 @@ Kong time), and recent capture batches every ten seconds. These indicators
 describe automation readiness, not live camera health. Capture completion
 does not imply that AI review is complete.
 
-Use **Automatic AI checks** to manage schedules and **Inspection reports**
-to view capture and analysis progress. Reports open on AI review for capture
-batches, which include current scheduled checks; the capture tab and legacy
-daily runs remain available. Links from schedule history open capture progress.
+Use **Automatic AI checks** to manage schedules. In **Inspection center**,
+start a manual capture of all configured DAHAU cameras or review capture and
+AI progress. Manual captures follow the separate automatic analysis setting
+for manual batches; starting a capture does not necessarily start AI review.
+The center opens on AI review for capture batches, which include current
+scheduled checks; capture details and legacy daily runs remain available.
+Links from schedule history open capture progress.
 **Recognition records** provides searchable findings, evidence and operator
 review with notes. Manual screenshot upload remains available there as a
 secondary, one-off inspection tool. One vision API request analyzes the
@@ -74,7 +78,7 @@ environment to also run the existing three checks and create recognition
 records. A worker restart marks interrupted work and missed runs; already saved
 JPEGs remain on disk.
 
-Open **Inspection reports** and select **View snapshot** on a saved
+Open **Inspection center**, select **Capture details & reports**, and select **View snapshot** on a saved
 result to preview its JPEG in the app. For an on-demand image, open **Camera
 configuration**, choose **Capture snapshot** on a DAHAU recorder, select a
 channel, and choose **Capture and download**. Supported browsers prompt for a

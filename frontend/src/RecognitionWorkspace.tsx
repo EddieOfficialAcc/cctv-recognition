@@ -12,6 +12,7 @@ import { SnapshotWorker } from './components/SnapshotWorker'
 import { UploadDialog } from './components/UploadDialog'
 import { MonitoringOverview } from './components/MonitoringOverview'
 import { CheckingRules } from './components/CheckingRules'
+import { Brand } from './components/Brand'
 import { useLocale } from './localization'
 import { isLanguage } from './messages'
 
@@ -135,14 +136,12 @@ export function RecognitionWorkspace({ apiStatus, onLogout }: { apiStatus: strin
   return <div className={`app-shell${sidebarVisible ? '' : ' sidebar-hidden'}`}>
     <a className="skip-link" href="#main-content">{t('skipLink')}</a>
     <aside id="sidebar" className="sidebar" hidden={!sidebarVisible}>
-      <a className="brand" href="/"><span className="brand-mark"><Icon name="camera" size={25} /></span>
-        <span>RETAIL<span className="brand-accent">VISION</span><small>{t('platform')}</small></span>
-      </a>
+      <a className="brand" href="/"><Brand /></a>
       <div className="workspace-label">{t('operationsWorkspace')}</div>
       <nav aria-label={t('mainNavigation')}>
         {([
-          ['overview', 'grid'], ['worker', 'clock'], ['rules', 'sliders'], ['reports', 'file'],
-          ['records', 'shield'], ['configuration', 'camera'],
+          ['overview', 'grid'], ['worker', 'clock'], ['reports', 'file'],
+          ['records', 'shield'], ['rules', 'sliders'], ['configuration', 'camera'],
         ] as const).map(([item, icon]) => <a key={item} className={`nav-item${view === item ? ' active' : ''}`} href="#main-content"
           aria-current={view === item ? 'page' : undefined} title={t(viewLabels[item])}
           onClick={() => {
@@ -197,9 +196,10 @@ export function RecognitionWorkspace({ apiStatus, onLogout }: { apiStatus: strin
         {logoutError && <div className="error-message language-warning" role="alert">{t('loginLogoutError')}</div>}
         {storageError && <div className="error-message language-warning" role="alert">{t('languageStorageError')}</div>}
         {view === 'overview' ? <MonitoringOverview onSchedules={() => setView('worker')} onReports={openReports}
+          onManualCapture={() => openReports(undefined, 'capture')}
           onCameras={() => setView('configuration')} onRecords={() => setView('records')} /> :
           view === 'rules' ? <CheckingRules /> :
-          view === 'configuration' ? <CameraConfiguration /> : view === 'reports' ? <InspectionReports onSelect={setSelected} initialBatch={reportBatch} initialTab={reportTab} /> :
+          view === 'configuration' ? <CameraConfiguration /> : view === 'reports' ? <InspectionReports onSelect={setSelected} onSchedules={() => setView('worker')} initialBatch={reportBatch} initialTab={reportTab} /> :
           view === 'worker' ? <SnapshotWorker onOpenReports={batch => openReports(batch, 'capture')} /> : <>
         <div className="page-heading">
           <div><p className="eyebrow">{t('qualityAssurance')}</p><h1>{t('recognitionRecords')}</h1>

@@ -3,6 +3,7 @@ import { authRequest, AuthError } from '../api'
 import { useLocale } from '../localization'
 import { isLanguage } from '../messages'
 import { Icon } from './Icon'
+import { Brand } from './Brand'
 
 export function LoginScreen({ onLogin, sessionError }: { onLogin: () => void; sessionError: boolean }) {
   const { language, setLanguage, storageError, t } = useLocale()
@@ -15,9 +16,7 @@ export function LoginScreen({ onLogin, sessionError }: { onLogin: () => void; se
 
   return <div className="login-page">
     <header className="login-header">
-      <div className="brand"><span className="brand-mark"><Icon name="camera" size={25} /></span>
-        <span>RETAIL<span className="brand-accent">VISION</span><small>{t('platform')}</small></span>
-      </div>
+      <div className="brand"><Brand /></div>
       <label className="language-selector"><span>{t('language')}</span>
         <select value={language} onChange={event => {
           if (isLanguage(event.target.value)) setLanguage(event.target.value)

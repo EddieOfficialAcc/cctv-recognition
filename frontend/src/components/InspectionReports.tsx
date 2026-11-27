@@ -29,8 +29,8 @@ export function InspectionProgress({ run, manual, onViewReport }: {
   </div>
 }
 
-export function InspectionReports({ onSelect, initialBatch, initialTab = 'analysis' }: {
-  onSelect: (record: RecognitionRecord) => void; initialBatch?: string; initialTab?: 'capture' | 'analysis'
+export function InspectionReports({ onSelect, onSchedules, initialBatch, initialTab = 'analysis' }: {
+  onSelect: (record: RecognitionRecord) => void; onSchedules: () => void; initialBatch?: string; initialTab?: 'capture' | 'analysis'
 }) {
   const { t, formatDate, errorMessage } = useLocale()
   const [runs, setRuns] = useState<InspectionRun[]>([])
@@ -100,7 +100,7 @@ export function InspectionReports({ onSelect, initialBatch, initialTab = 'analys
     try {
       const batch = await startSnapshotBatch(recheckSkipped)
       setRecheckSkipped(false)
-      setManual(true); setRuns([batch]); setSelected(batch.id); setItems(null); setPage(1)
+      setManual(true); setRuns([batch]); setSelected(batch.id); setItems(null); setPage(1); setTab('capture')
       setError(null); setRefresh(value => value + 1)
     } catch (cause) {
       console.error('Snapshot batch failed to start:', cause)
@@ -130,11 +130,22 @@ export function InspectionReports({ onSelect, initialBatch, initialTab = 'analys
     <div className="page-heading"><div><p className="eyebrow">{t('operations')}</p><h1>{t('inspectionReports')}</h1>
       <p className="page-description">{t('inspectionReportsDescription')}</p></div>
       <div className="configuration-actions">
-        {tab === 'capture' && <button className="button primary" disabled={starting || (manual && runs.some(run => run.status === 'running'))}
-          onClick={() => setConfirmBatch(true)}><Icon name="camera" size={16} />{t(starting ? 'batchStarting' : 'batchCaptureAll')}</button>}
         <button className="button secondary" onClick={reload} disabled={loading}><Icon name="refresh" size={16} />{t('refresh')}</button>
       </div>
     </div>
+    <section className="inspection-actions" aria-label={t('inspectionStartOptions')}>
+      <div className="inspection-action">
+        <div><h2>{t('manualCaptureTitle')}</h2><p>{t('manualCaptureHint')}</p></div>
+        <button className="button primary" disabled={starting || (manual && runs.some(run => run.status === 'running'))}
+          onClick={() => setConfirmBatch(true)}><Icon name="camera" size={16} />{t(starting ? 'batchStarting' : 'manualCaptureStart')}</button>
+      </div>
+      <div className="inspection-action">
+        <div><h2>{t('automaticCheckTitle')}</h2><p>{t('automaticCheckHint')}</p></div>
+        <button className="button secondary" onClick={onSchedules}><Icon name="clock" size={16} />{t('monitoringManageSchedules')}</button>
+      </div>
+    </section>
+    {startError && <div className="error-message inspection-start-error" role="alert">{errorMessage(startError)}</div>}
+    <div className="inspection-results-heading"><h2>{t('inspectionResultsTitle')}</h2><p>{t('inspectionResultsHint')}</p></div>
     <div className="report-tabs" role="tablist" aria-label={t('reportViews')}>
       {(['analysis', 'capture'] as const).map(value => <button key={value} type="button" role="tab"
         id={`inspection-tab-${value}`} aria-controls={`inspection-panel-${value}`}
@@ -172,7 +183,6 @@ export function InspectionReports({ onSelect, initialBatch, initialTab = 'analys
       {tab === 'analysis' && <SnapshotAnalysis key={`${manual}:${selected}`} run={run} manual={manual} onSelect={onSelect} />}
     </div>
     <div role="tabpanel" id="inspection-panel-capture" aria-labelledby="inspection-tab-capture" hidden={tab !== 'capture'}>
-    {startError && <div className="error-message" role="alert">{errorMessage(startError)}</div>}
     {exclusionError && <div className="error-message" role="alert">{errorMessage(exclusionError)}</div>}
     {exclusionSaved && <p role="status">{t('batchExclusionSaved')}</p>}
     {recordError && <div className="error-message" role="alert">{t('reportRecordError')}</div>}

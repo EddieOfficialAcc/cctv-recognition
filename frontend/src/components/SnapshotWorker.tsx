@@ -132,7 +132,7 @@ export function SnapshotWorker({ onOpenReports }: { onOpenReports: (batchId?: st
       <div><p className="eyebrow">{t('operations')}</p><h1>{t('snapshotWorker')}</h1>
         <p className="page-description">{t('workerSchedule')}</p></div>
       <div className="configuration-actions">
-        <button className="button secondary" onClick={() => onOpenReports()}><Icon name="camera" size={16} />{t('batchOpenReports')}</button>
+        <button className="button secondary" onClick={() => onOpenReports()}><Icon name="camera" size={16} />{t('manualCaptureOpen')}</button>
         <button className="button secondary" onClick={() => setRefresh(value => value + 1)}><Icon name="refresh" size={16} />{t('refresh')}</button>
       </div>
     </div>
@@ -217,7 +217,8 @@ export function SnapshotWorker({ onOpenReports }: { onOpenReports: (batchId?: st
           </fieldset>
         </form>}
         <details className="report-help"><summary>{t('schedulePolicyTitle')}</summary>
-          <p>{t('schedulePolicy')}</p><p>{t('scheduleBackendHint')}</p></details>
+          <div className="report-help-content"><p>{t('schedulePolicy')}</p><p>{t('scheduleBackendHint')}</p></div>
+        </details>
       </div>
     </section>
     <section className="records-panel" aria-labelledby="schedule-history">

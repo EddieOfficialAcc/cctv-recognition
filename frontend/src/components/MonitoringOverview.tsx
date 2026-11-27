@@ -12,9 +12,10 @@ interface MonitoringData {
   analysis: AnalysisSettings
 }
 
-export function MonitoringOverview({ onSchedules, onReports, onCameras, onRecords }: {
+export function MonitoringOverview({ onSchedules, onReports, onManualCapture, onCameras, onRecords }: {
   onSchedules: () => void
   onReports: (batchId?: string) => void
+  onManualCapture: () => void
   onCameras: () => void
   onRecords: () => void
 }) {
@@ -79,6 +80,7 @@ export function MonitoringOverview({ onSchedules, onReports, onCameras, onRecord
         <p>{t('monitoringIntro')}</p>
         <div className="configuration-actions">
           <button className="button primary" onClick={onSchedules}><Icon name="clock" size={17} />{t('monitoringManageSchedules')}</button>
+          <button className="button hero-secondary" onClick={onManualCapture}><Icon name="camera" size={17} />{t('manualCaptureOpen')}</button>
           <button className="button hero-secondary" onClick={() => onReports()}>{t('monitoringViewResults')}<Icon name="chevron" size={15} /></button>
         </div>
       </div>

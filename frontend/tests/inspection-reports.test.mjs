@@ -22,6 +22,7 @@ test('automatic schedule page locales and revision-aware API contracts', async (
       const html = renderToStaticMarkup(React.createElement(Provider, null, React.createElement(SnapshotWorker, { onOpenReports() {} })))
       assert.ok(html.includes(heading))
       assert.match(html, /UTC\+08:00/)
+      assert.match(html, /<details class="report-help"><summary>[^<]+<\/summary><div class="report-help-content"><p>/)
       assert.doesNotMatch(html, /SCHEDULED_INSPECTION_ENABLED/)
     }
     const input = { name: 'Weekly', enabled: false, cron: '30 9 * * 1', skip_holidays: true }
@@ -152,15 +153,17 @@ test('inspection reports exposes bulk capture and run selection in all locales',
     const { InspectionReports, InspectionProgress } = await server.ssrLoadModule('/src/components/InspectionReports.tsx')
     const { SnapshotBatchReportDetails } = await server.ssrLoadModule('/src/components/SnapshotBatchReportDialog.tsx')
     const { LocaleContext, useLanguageState } = await server.ssrLoadModule('/src/localization.ts')
-    for (const [language, capture] of [
-      ['en', 'Capture all DAHAU cameras'], ['zh-Hant', '擷取所有 DAHAU 攝影機'], ['zh-Hans', '抓取所有 DAHAU 摄像机'],
+    for (const [language, capture, schedule, results] of [
+      ['en', 'Start manual capture', 'Automatic AI checks', 'Review a check'],
+      ['zh-Hant', '啟動手動擷取', '自動 AI 檢查', '查看檢查結果'],
+      ['zh-Hans', '启动手动抓取', '自动 AI 检查', '查看检查结果'],
     ]) {
       globalThis.localStorage = { getItem: () => language }
       function Provider({ children }) {
         return React.createElement(LocaleContext.Provider, { value: useLanguageState() }, children)
       }
       const html = renderToStaticMarkup(React.createElement(Provider, null,
-        React.createElement(InspectionReports, { onSelect() {}, initialTab: 'capture' })))
+        React.createElement(InspectionReports, { onSelect() {}, onSchedules() {}, initialTab: 'capture' })))
       assert.ok(html.includes(capture))
       assert.match(html, /option value="manual" selected=""/)
       assert.match(html, /camera-snapshots\/batches/)
@@ -169,11 +172,13 @@ test('inspection reports exposes bulk capture and run selection in all locales',
       assert.match(html, /id="inspection-tab-analysis"[^>]*aria-selected="false"/)
       assert.doesNotMatch(html, /type="checkbox"/)
       const defaultView = renderToStaticMarkup(React.createElement(Provider, null,
-        React.createElement(InspectionReports, { onSelect() {} })))
+        React.createElement(InspectionReports, { onSelect() {}, onSchedules() {} })))
       assert.match(defaultView, /id="inspection-tab-analysis"[^>]*aria-selected="true"/)
       assert.match(defaultView, /id="inspection-tab-capture"[^>]*aria-selected="false"/)
       assert.match(defaultView, /option value="manual" selected=""/)
-      assert.ok(!defaultView.includes(capture), 'bulk capture is secondary to AI results')
+      assert.ok(defaultView.includes(capture), 'manual capture is available on the default view')
+      assert.ok(defaultView.includes(schedule))
+      assert.ok(defaultView.includes(results))
       const progress = renderToStaticMarkup(React.createElement(Provider, null,
         React.createElement(InspectionProgress, {
           manual: true,

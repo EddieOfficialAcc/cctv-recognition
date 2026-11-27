@@ -27,21 +27,19 @@ test('sidebar starts open on desktop and closed on small screens', async () => {
     const mobile = render(true)
     assert.match(mobile, /id="sidebar" class="sidebar" hidden=""/)
     assert.match(mobile, /class="topbar-leading".*aria-expanded="false" aria-label="Show sidebar"/)
-    for (const [language, heading, schedules, reports, records, upload] of [
-      ['en', 'Monitoring overview', 'Automatic AI checks', 'Inspection reports', 'Recognition records', 'Upload screenshot'],
-      ['zh-Hant', '監察總覽', '自動 AI 檢查', '檢查報告', '辨識紀錄', '上傳截圖'],
-      ['zh-Hans', '监控总览', '自动 AI 检查', '检查报告', '识别记录', '上传截图'],
+    for (const [language, heading, schedules, reports, records, rules, cameras, upload] of [
+      ['en', 'Monitoring overview', 'Automatic AI checks', 'Inspection center', 'Recognition records', 'Checking rules', 'Camera configuration', 'Upload screenshot'],
+      ['zh-Hant', '監察總覽', '自動 AI 檢查', '檢查中心', '辨識紀錄', '檢查規則', '攝影機設定', '上傳截圖'],
+      ['zh-Hans', '监控总览', '自动 AI 检查', '检查中心', '识别记录', '检查规则', '摄像机配置', '上传截图'],
     ]) {
       const html = render(false, language)
       assert.ok(html.includes(`<h1>${heading}</h1>`))
+      assert.match(html, /BEST MART <span class="brand-accent">360°<\/span>/)
+      assert.ok(html.includes('RetailVision ·'))
       const nav = html.match(/<nav[^>]*>(.*?)<\/nav>/)[1]
-      assert.ok(nav.indexOf(`title="${heading}"`) < nav.indexOf(`title="${schedules}"`))
-      assert.ok(nav.indexOf(`title="${schedules}"`) < nav.indexOf(`title="${reports}"`))
-      const ruleLabel = { en: 'Checking rules', 'zh-Hant': '檢查規則', 'zh-Hans': '检查规则' }[language]
-      assert.ok(nav.includes(`title="${ruleLabel}"`))
-      assert.ok(nav.indexOf(`title="${schedules}"`) < nav.indexOf(`title="${ruleLabel}"`))
-      assert.ok(nav.indexOf(`title="${ruleLabel}"`) < nav.indexOf(`title="${reports}"`))
-      assert.ok(nav.indexOf(`title="${reports}"`) < nav.indexOf(`title="${records}"`))
+      const positions = [heading, schedules, reports, records, rules, cameras].map(label => nav.indexOf(`title="${label}"`))
+      assert.ok(positions.every(position => position >= 0))
+      assert.deepEqual(positions, [...positions].sort((a, b) => a - b))
       assert.match(nav, /aria-current="page" title=/)
       assert.ok(!html.includes(`>${upload}</button>`), 'manual upload is not a home-screen action')
       assert.match(html, /class="monitoring-flow"/)

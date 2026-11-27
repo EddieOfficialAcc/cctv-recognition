@@ -20,6 +20,8 @@ test('login offers an opt-in remembered session in every language with password-
       const html = renderToStaticMarkup(React.createElement(Provider, null,
         React.createElement(LoginScreen, { onLogin() {}, sessionError: false })))
       assert.ok(html.includes(label))
+      assert.match(html, /BEST MART <span class="brand-accent">360°<\/span>/)
+      assert.ok(html.includes('RetailVision ·'))
       assert.match(html, /type="checkbox"[^>]*aria-describedby="remember-me-hint"/)
       assert.doesNotMatch(html, /type="checkbox"[^>]*checked/)
       assert.match(html, /autoComplete="current-password"/)
