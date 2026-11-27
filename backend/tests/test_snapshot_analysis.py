@@ -336,6 +336,58 @@ class SnapshotAnalysisTest(unittest.TestCase):
         self.assertEqual((maximum, count), (2, 4))
         self.assertEqual(self.queue.page(self.source).summary.completed, 4)
 
+    def test_stopping_worker_drains_inflight_without_starting_queued_reviews(self):
+        for _ in range(4):
+            self.enqueue()
+        self.queue.release(self.owner)
+        entered, release, completed = Event(), Event(), Event()
+        lock = Lock()
+        started = finished = 0
+
+        def model(*args, **kwargs):
+            nonlocal started, finished
+            with lock:
+                started += 1
+                if started == 2:
+                    entered.set()
+            if not release.wait(5):
+                raise TimeoutError("Test did not release model.")
+            with lock:
+                finished += 1
+                if finished == 2:
+                    completed.set()
+            return self.result
+
+        self.analyze_screenshot.side_effect = model
+        worker = analysis.AnalysisWorker(self.root, 2)
+        worker.start()
+        try:
+            self.assertTrue(entered.wait(5))
+            self.queue.stop_source(self.source)
+            self.enqueue()
+            self.assertEqual(self.queue.page(self.source).summary.stopped, 3)
+            release.set()
+            self.assertTrue(completed.wait(5))
+            self.assertFalse(worker.stopped.wait(1.5))
+        finally:
+            release.set()
+            worker.stop()
+        summary = self.queue.page(self.source).summary
+        self.assertEqual((started, summary.completed, summary.stopped, summary.queued), (2, 2, 3, 0))
+
+    def test_worker_recovery_does_not_restart_stopped_inflight_review(self):
+        self.enqueue()
+        self.assertIsNotNone(self.queue.claim(self.owner))
+        self.queue.stop_source(self.source)
+        self.queue.release(self.owner)
+        replacement = str(uuid4())
+        self.assertTrue(self.queue.lead(replacement, time.time()))
+        summary = self.queue.page(self.source).summary
+        self.assertEqual((summary.stopped, summary.analyzing, summary.queued), (1, 0, 0))
+        self.assertIsNone(self.queue.claim(replacement))
+        self.queue.resume_source(self.source)
+        self.assertIsNotNone(self.queue.claim(replacement))
+
     def api_setup(self, quantity=26):
         settings = RecorderSettings(_env_file=None, snapshot_dir=self.root, dahau_password="test-only")
         for target, result in (
@@ -391,13 +443,48 @@ class SnapshotAnalysisTest(unittest.TestCase):
             snapshot.assert_not_called()
         self.analyze_screenshot.assert_not_called()
 
+    def test_stop_and_resume_preserves_inflight_and_future_jobs_for_one_source(self):
+        report = self.api_setup(1)
+        self.source = f"batch:{report.id}"
+        for _ in range(4):
+            self.enqueue()
+        first = self.queue.claim(self.owner)
+        second = self.queue.claim(self.owner)
+        base = f"/api/snapshot-analysis/batch/{report.id}"
+        with TestClient(app) as client:
+            response = client.post(base + "/stop")
+            self.assertEqual(response.status_code, 202)
+            self.assertEqual((response.json()["summary"]["analyzing"], response.json()["summary"]["stopped"]), (2, 2))
+            self.assertTrue(response.json()["summary"]["stop_requested"])
+            self.assertIsNone(self.queue.claim(self.owner))
+            self.enqueue()
+            analysis.process_item(self.queue, first)
+            self.queue.fail(second, "Retry later.", delay=1)
+            summary = self.queue.page(self.source).summary
+            self.assertEqual((summary.completed, summary.stopped, summary.queued), (1, 4, 0))
+            self.assertIsNone(self.queue.claim(self.owner))
+            other_source = f"batch:{uuid4()}"
+            other_id = uuid4()
+            other_path = self.root / f"{other_id}.jpeg"
+            other_path.write_bytes(self.image)
+            self.queue.enqueue(other_source, other_id, other_path, "002", "Hong Kong", 1, self.captured)
+            self.assertEqual(self.queue.claim(self.owner)["id"], str(other_id))
+            response = client.post(base + "/resume")
+            self.assertEqual(response.status_code, 202)
+            self.assertFalse(response.json()["summary"]["stop_requested"])
+            self.assertEqual(response.json()["summary"]["queued"], 4)
+            self.assertIsNotNone(self.queue.claim(self.owner))
+
     def test_authentication_and_csrf_protect_queue_mutations(self):
         report = self.api_setup()
         app.dependency_overrides.pop(require_user)
         with TestClient(app) as client:
             self.assertEqual(client.get("/api/snapshot-analysis/settings").status_code, 401)
             for endpoint in (f"/api/snapshot-batches/{report.id}/analysis",
-                             f"/api/snapshot-analysis/batch/{report.id}/retry"):
+                             f"/api/snapshot-analysis/batch/{report.id}/retry",
+                             f"/api/snapshot-analysis/batch/{report.id}/stop",
+                             f"/api/snapshot-analysis/batch/{report.id}/resume",
+                             f"/api/snapshot-batches/{report.id}/stop/DAHAU"):
                 self.assertEqual(client.post(endpoint, json={}).status_code, 403)
                 self.assertEqual(client.post(endpoint, json={}, headers={"X-Requested-With": "XMLHttpRequest"}).status_code, 401)
             self.assertEqual(client.patch("/api/snapshot-analysis/settings", json={"auto_analyze": True}).status_code, 403)

@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 LEASE_SECONDS = 60
 MAX_ATTEMPTS = 3
 HONG_KONG = timezone(timedelta(hours=8))
-AnalysisStatus = Literal["queued", "analyzing", "completed", "failed"]
+AnalysisStatus = Literal["queued", "analyzing", "completed", "failed", "stopped"]
 
 
 class QueueError(RuntimeError):
@@ -76,9 +76,11 @@ class AnalysisSummary(BaseModel):
     analyzing: int
     completed: int
     failed: int
+    stopped: int
     flagged: int
     worker_online: bool
     auto_analyze: bool
+    stop_requested: bool
 
 
 class AnalysisPage(BaseModel):
@@ -120,6 +122,13 @@ class AnalysisQueue:
                 );
                 CREATE INDEX IF NOT EXISTS jobs_source ON jobs(source, created, id);
                 CREATE INDEX IF NOT EXISTS jobs_pending ON jobs(status, available, created);
+                CREATE TABLE IF NOT EXISTS stopped_sources (
+                    source TEXT PRIMARY KEY
+                );
+                CREATE TABLE IF NOT EXISTS capture_stops (
+                    batch_id TEXT NOT NULL, brand TEXT NOT NULL,
+                    PRIMARY KEY(batch_id, brand)
+                );
                 CREATE TABLE IF NOT EXISTS captures (
                     id TEXT PRIMARY KEY, recorder_key TEXT NOT NULL, channel INTEGER NOT NULL,
                     captured REAL NOT NULL, path TEXT NOT NULL, digest TEXT NOT NULL
@@ -153,6 +162,23 @@ class AnalysisQueue:
     def set_auto_analyze(self, enabled: bool) -> None:
         with self.connection() as db:
             db.execute("UPDATE control SET auto_analyze=? WHERE id=1", (enabled,))
+
+    def request_capture_stop(self, batch_id: UUID, brand: str) -> None:
+        with self.connection() as db:
+            db.execute("INSERT OR IGNORE INTO capture_stops(batch_id, brand) VALUES(?, ?)",
+                       (str(batch_id), brand))
+
+    def capture_stops(self, batch_id: UUID) -> set[str]:
+        with self.connection() as db:
+            return {row[0] for row in db.execute(
+                "SELECT brand FROM capture_stops WHERE batch_id=?", (str(batch_id),))}
+
+    def capture_stops_at_boundary(self, batch_id: UUID) -> set[str]:
+        # This transaction defines when the next capture becomes in-flight.
+        with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            return {row[0] for row in db.execute(
+                "SELECT brand FROM capture_stops WHERE batch_id=?", (str(batch_id),))}
 
     def capture_ids(self) -> set[str]:
         with self.connection() as db:
@@ -241,8 +267,9 @@ class AnalysisQueue:
                 if old["source"] != source or previous.digest != entry.digest:
                     raise QueueError("An already queued snapshot changed. Capture a new batch instead.")
                 return
-            db.execute("INSERT INTO jobs(id, source, input, created) VALUES(?,?,?,?)",
-                       (str(item_id), source, entry.model_dump_json(), time.time()))
+            stopped = db.execute("SELECT 1 FROM stopped_sources WHERE source=?", (source,)).fetchone()
+            db.execute("INSERT INTO jobs(id, source, input, status, created) VALUES(?,?,?,?,?)",
+                       (str(item_id), source, entry.model_dump_json(), "stopped" if stopped else "queued", time.time()))
 
     def page(self, source: str, page: int = 1, page_size: int = 20,
              status: AnalysisStatus | None = None) -> AnalysisPage:
@@ -255,6 +282,7 @@ class AnalysisQueue:
                 "AND json_extract(result, '$.outcome')='flagged'", (source,),
             ).fetchone()[0]
             control = db.execute("SELECT expires, auto_analyze FROM control WHERE id=1").fetchone()
+            stopped = db.execute("SELECT 1 FROM stopped_sources WHERE source=?", (source,)).fetchone() is not None
             clause = "source=?" + (" AND status=?" if status else "")
             parameters = (source, status) if status else (source,)
             rows = db.execute(
@@ -274,15 +302,31 @@ class AnalysisQueue:
             summary=AnalysisSummary(
                 total=sum(counts.values()), flagged=flagged,
                 worker_online=control["expires"] > time.time(), auto_analyze=bool(control["auto_analyze"]),
-                **{state: counts.get(state, 0) for state in ("queued", "analyzing", "completed", "failed")},
+                stop_requested=stopped,
+                **{state: counts.get(state, 0) for state in ("queued", "analyzing", "completed", "failed", "stopped")},
             ),
             total=counts.get(status, 0) if status else sum(counts.values()), page=page, page_size=page_size,
         )
 
     def retry_failed(self, source: str) -> None:
         with self.connection() as db:
-            db.execute("UPDATE jobs SET status='queued', attempts=0, available=0, message='' "
-                       "WHERE source=? AND status='failed'", (source,))
+            db.execute("UPDATE jobs SET status=CASE WHEN EXISTS "
+                       "(SELECT 1 FROM stopped_sources WHERE source=?) THEN 'stopped' ELSE 'queued' END, "
+                       "attempts=0, available=0, message='' WHERE source=? AND status='failed'", (source, source))
+
+    def stop_source(self, source: str) -> None:
+        with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute("INSERT OR IGNORE INTO stopped_sources(source) VALUES(?)", (source,))
+            db.execute("UPDATE jobs SET status='stopped', available=0, message='' "
+                       "WHERE source=? AND status='queued'", (source,))
+
+    def resume_source(self, source: str) -> None:
+        with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute("DELETE FROM stopped_sources WHERE source=?", (source,))
+            db.execute("UPDATE jobs SET status='queued', available=0, message='' "
+                       "WHERE source=? AND status='stopped'", (source,))
 
     def lead(self, owner: str, now: float) -> bool:
         with self.connection() as db:
@@ -292,7 +336,9 @@ class AnalysisQueue:
                 if control["expires"] > now:
                     return False
                 db.execute(
-                    "UPDATE jobs SET status=CASE WHEN attempts<? OR result IS NOT NULL THEN 'queued' ELSE 'failed' END, "
+                    "UPDATE jobs SET status=CASE WHEN EXISTS (SELECT 1 FROM stopped_sources s "
+                    "WHERE s.source=jobs.source) THEN 'stopped' "
+                    "WHEN attempts<? OR result IS NOT NULL THEN 'queued' ELSE 'failed' END, "
                     "message='AI worker was interrupted; unfinished work requires recovery.' WHERE status='analyzing'",
                     (MAX_ATTEMPTS,),
                 )
@@ -330,8 +376,10 @@ class AnalysisQueue:
         retry = delay is not None and row["attempts"] + 1 < MAX_ATTEMPTS
         available = time.time() + delay if delay is not None else 0
         with self.connection() as db:
-            db.execute("UPDATE jobs SET status=?, message=?, available=? WHERE id=?",
-                       ("queued" if retry else "failed", message, available if retry else 0, row["id"]))
+            db.execute("UPDATE jobs SET status=CASE WHEN ? AND EXISTS "
+                       "(SELECT 1 FROM stopped_sources WHERE source=jobs.source) THEN 'stopped' "
+                       "WHEN ? THEN 'queued' ELSE 'failed' END, message=?, available=? WHERE id=?",
+                       (retry, retry, message, available if retry else 0, row["id"]))
             if rate_limited:
                 db.execute("UPDATE control SET paused_until=MAX(paused_until, ?) WHERE id=1", (available,))
 

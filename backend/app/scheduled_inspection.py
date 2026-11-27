@@ -11,6 +11,7 @@ import logging
 import os
 from pathlib import Path
 import time as clock
+from typing import Literal
 from uuid import UUID, uuid4
 
 import pyodbc
@@ -49,13 +50,16 @@ def _execute(sql: str, *parameters) -> None:
         cursor.execute(sql, *parameters)
 
 
-def _eligible_recorders(*, include_missing_addresses: bool = False) -> list:
+def _eligible_recorders(*, include_missing_addresses: bool = False,
+                        brand: Literal["DAHAU", "HIKVISION"] | None = None) -> list:
     address_filter = "" if include_missing_addresses else " AND internal_ip IS NOT NULL"
+    brand_filter = "brand = ?" if brand is not None else "brand IN ('DAHAU', 'HIKVISION')"
+    parameters = (brand,) if brand is not None else ()
     with closing(connect(DatabaseSettings())) as connection, closing(connection.cursor()) as cursor:
         return cursor.execute(
             "SELECT shop_code, region, internal_ip, cam_qty, brand, admin_name, admin_password "
-            f"FROM dbo.cctv_config WHERE brand IN ('DAHAU', 'HIKVISION'){address_filter} "
-            "ORDER BY shop_code"
+            f"FROM dbo.cctv_config WHERE {brand_filter}{address_filter} "
+            "ORDER BY shop_code", *parameters,
         ).fetchall()
 
 

@@ -28,7 +28,7 @@ from app.scheduled_inspection import HONG_KONG
 from app.snapshot_analysis import AnalysisQueue, LEASE_SECONDS, QueueError
 
 logger = logging.getLogger(__name__)
-OccurrenceStatus = Literal["running", "completed", "interrupted", "failed", "skipped", "missed"]
+OccurrenceStatus = Literal["running", "completed", "interrupted", "failed", "skipped", "missed", "stopped"]
 
 
 class ScheduleInput(BaseModel):
@@ -201,7 +201,7 @@ class ScheduleStore:
                         if path.is_file():
                             report = batches.BatchReport.model_validate_json(path.read_text("utf-8"))
                             status = report.status if report.status != "running" else "interrupted"
-                            if status == "completed":
+                            if status in ("completed", "stopped"):
                                 message = ""
                     except (OSError, ValidationError) as error:
                         logger.error("Scheduled batch recovery failed (%s).", type(error).__name__)
@@ -286,6 +286,8 @@ def capture_review(root: Path, occurrence: Occurrence, stopped: Event) -> tuple[
                 batches._capture_batch(root, report, recorders, connection, stopped=stopped)
             if report.status == "completed":
                 return "completed", report.analysis_error
+            if report.status == "stopped":
+                return "stopped", report.analysis_error
             return "interrupted", report.error or "Capture was interrupted. Open the batch report."
     except (QueueError, OSError, ValueError, pyodbc.Error) as error:
         logger.error("Scheduled review %s failed (%s).", occurrence.id, type(error).__name__)

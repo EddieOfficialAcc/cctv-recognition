@@ -5,7 +5,7 @@ export type ReviewStatus = 'new' | 'acknowledged' | 'false_positive'
 export type Outcome = 'flagged' | 'needs_review'
 export type Region = 'Hong Kong' | 'Macau'
 
-export type ErrorCode = 'rulesConflictError' | 'rulesValidationError' | 'rulesStorageError' | 'scheduleConflictError' | 'scheduleValidationError' | 'aiConfigurationError' | 'aiStorageError' | 'batchStorageError' | 'batchExclusionAmbiguous' | 'batchAlreadyRunning' | 'batchNoRecorders' | 'snapshotConfigurationError' | 'requestError' | 'storageError' | 'analysisError' | 'validationError' | 'notFoundError' |
+export type ErrorCode = 'rulesConflictError' | 'rulesValidationError' | 'rulesStorageError' | 'scheduleConflictError' | 'scheduleValidationError' | 'aiConfigurationError' | 'aiStorageError' | 'batchStorageError' | 'batchExclusionAmbiguous' | 'batchAlreadyRunning' | 'batchNoRecorders' | 'batchStopConflict' | 'snapshotConfigurationError' | 'requestError' | 'storageError' | 'analysisError' | 'validationError' | 'notFoundError' |
   'responseError' | 'fileTypeError' | 'fileSizeError' | 'imageCorruptError' | 'resolutionError' | 'animatedError'
 
 export class ApiError extends Error {
@@ -93,6 +93,9 @@ export interface InspectionRun {
   skipped: number
   interrupted: number
   saved: number
+  stopped?: number
+  capture_brands?: Array<Exclude<CameraBrandFilter, ''>>
+  stop_requested?: Array<Exclude<CameraBrandFilter, ''>>
 }
 
 export interface InspectionItem {
@@ -131,7 +134,7 @@ export interface SnapshotBatchReport {
 export const inspectionStatusKeys: Record<string, MessageKey> = {
   running: 'runRunning', completed: 'runCompleted', interrupted: 'runInterrupted', missed: 'runMissed',
   pending: 'runPending', captured: 'runCaptured', failed: 'runFailed', skipped: 'runSkipped',
-  capturing: 'runCapturing',
+  capturing: 'runCapturing', stopped: 'runStopped',
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -184,7 +187,12 @@ function isInspectionRun(value: unknown): value is InspectionRun {
 }
 
 function isSnapshotBatch(value: unknown): value is InspectionRun & { id: string } {
-  return isInspectionRun(value) && typeof value.id === 'string'
+  return isInspectionRun(value) && typeof value.id === 'string' &&
+    (value.stopped === undefined || typeof value.stopped === 'number') &&
+    ['capture_brands', 'stop_requested'].every(key => {
+      const brands = value[key as 'capture_brands' | 'stop_requested']
+      return brands === undefined || (Array.isArray(brands) && brands.every(brand => brand === 'DAHAU' || brand === 'HIKVISION'))
+    })
 }
 
 function isInspectionItem(value: unknown): value is InspectionItem {
@@ -231,6 +239,8 @@ async function request<T>(
     if (message === 'A manual snapshot batch is already running.') code = 'batchAlreadyRunning'
     if (message === 'No DAHAU recorders are configured for batch capture.') code = 'batchNoRecorders'
     if (message === 'No supported recorders are configured for batch capture.') code = 'batchNoRecorders'
+    if (message === 'No recorders match the selected brand for batch capture.') code = 'batchNoRecorders'
+    if (message === 'This brand has no capture in progress.') code = 'batchStopConflict'
     if (message === 'A unique current recorder configuration is required to exclude this channel.') code = 'batchExclusionAmbiguous'
     if (url.startsWith('/api/review-schedules')) {
       if (response.status === 409) code = 'scheduleConflictError'
@@ -353,15 +363,23 @@ export async function captureCameraSnapshot(shop_code: string, region: string, c
   return image
 }
 
-export function startSnapshotBatch(recheckSkipped = false) {
-  return request(`/api/snapshot-batches?recheck_skipped=${recheckSkipped}`, isSnapshotBatch, {
+export function startSnapshotBatch(recheckSkipped = false, brand: CameraBrandFilter = '') {
+  const params = new URLSearchParams({ recheck_skipped: String(recheckSkipped) })
+  if (brand) params.set('brand', brand)
+  return request(`/api/snapshot-batches?${params}`, isSnapshotBatch, {
     method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' },
   })
 }
 
-export type AnalysisStatus = 'queued' | 'analyzing' | 'completed' | 'failed'
+export function stopSnapshotBatchBrand(id: string, brand: Exclude<CameraBrandFilter, ''>) {
+  return request(`/api/snapshot-batches/${encodeURIComponent(id)}/stop/${brand}`, isSnapshotBatch, {
+    method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' },
+  })
+}
+
+export type AnalysisStatus = 'queued' | 'analyzing' | 'completed' | 'failed' | 'stopped'
 export const analysisStatusKeys = {
-  queued: 'aiQueued', analyzing: 'aiAnalyzing', completed: 'runCompleted', failed: 'runFailed',
+  queued: 'aiQueued', analyzing: 'aiAnalyzing', completed: 'runCompleted', failed: 'runFailed', stopped: 'runStopped',
 } as const satisfies Record<AnalysisStatus, MessageKey>
 
 export interface AnalysisSettings {
@@ -378,9 +396,11 @@ export interface AnalysisSummary {
   analyzing: number
   completed: number
   failed: number
+  stopped: number
   flagged: number
   worker_online: boolean
   auto_analyze: boolean
+  stop_requested: boolean
 }
 
 export interface AnalysisItem {
@@ -410,14 +430,15 @@ function isAnalysisSettings(value: unknown): value is AnalysisSettings {
 
 function isAnalysisPage(value: unknown): value is AnalysisPage {
   return isObject(value) && ['total', 'page', 'page_size'].every(key => typeof value[key] === 'number') &&
-    isObject(value.summary) && ['total', 'queued', 'analyzing', 'completed', 'failed', 'flagged']
+    isObject(value.summary) && ['total', 'queued', 'analyzing', 'completed', 'failed', 'stopped', 'flagged']
       .every(key => isObject(value.summary) && typeof value.summary[key] === 'number') &&
     typeof value.summary.worker_online === 'boolean' && typeof value.summary.auto_analyze === 'boolean' &&
+    typeof value.summary.stop_requested === 'boolean' &&
     Array.isArray(value.items) && value.items.every(item => isObject(item) &&
       ['id', 'shop_code', 'message'].every(key => typeof item[key] === 'string') &&
       (item.region === 'Hong Kong' || item.region === 'Macau') &&
       typeof item.channel === 'number' && typeof item.attempts === 'number' &&
-      ['queued', 'analyzing', 'completed', 'failed'].includes(String(item.status)) &&
+      ['queued', 'analyzing', 'completed', 'failed', 'stopped'].includes(String(item.status)) &&
       (item.retry_at === null || typeof item.retry_at === 'string') &&
       (item.record === null || isRecord(item.record)) &&
       (item.status !== 'completed' || isRecord(item.record)))
@@ -450,7 +471,7 @@ export interface ReviewOccurrence {
   scheduled_at: string
   finished_at: string | null
   batch_id: string
-  status: 'running' | 'completed' | 'interrupted' | 'failed' | 'skipped' | 'missed'
+  status: 'running' | 'completed' | 'interrupted' | 'failed' | 'skipped' | 'missed' | 'stopped'
   message: string
   has_report: boolean
 }
@@ -480,7 +501,7 @@ function isReviewSchedulePage(value: unknown): value is ReviewSchedulePage {
       ['id', 'schedule_id', 'schedule_name', 'batch_id', 'message'].every(key => typeof row[key] === 'string') &&
       typeof row.has_report === 'boolean' && isDate(row.scheduled_at) &&
       (row.finished_at === null || isDate(row.finished_at)) &&
-      ['running', 'completed', 'interrupted', 'failed', 'skipped', 'missed'].includes(String(row.status)))
+      ['running', 'completed', 'interrupted', 'failed', 'skipped', 'missed', 'stopped'].includes(String(row.status)))
 }
 
 const scheduleHeaders = { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }
@@ -534,6 +555,12 @@ export function startBatchAnalysis(id: string, limit: 20 | null) {
 
 export function retryAnalysis(id: string, manual: boolean) {
   return request(`${analysisSource(id, manual)}/retry`, isAnalysisPage, {
+    method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' },
+  })
+}
+
+export function setAnalysisStopped(id: string, manual: boolean, stopped: boolean) {
+  return request(`${analysisSource(id, manual)}/${stopped ? 'stop' : 'resume'}`, isAnalysisPage, {
     method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' },
   })
 }

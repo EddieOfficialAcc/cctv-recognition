@@ -77,8 +77,8 @@ test('AI review progress, localization, queue API contracts and strict response 
     const api = await server.ssrLoadModule('/src/api.ts')
     const { AnalysisProgress, SnapshotAnalysis } = await server.ssrLoadModule('/src/components/SnapshotAnalysis.tsx')
     const { LocaleContext, useLanguageState } = await server.ssrLoadModule('/src/localization.ts')
-    const summary = { total: 20, queued: 10, analyzing: 2, completed: 6, failed: 2, flagged: 3,
-      worker_online: false, auto_analyze: false }
+    const summary = { total: 20, queued: 10, analyzing: 2, completed: 6, failed: 2, stopped: 0, flagged: 3,
+      worker_online: false, auto_analyze: false, stop_requested: false }
     for (const [language, heading, auto] of [
       ['en', 'Snapshot AI review', 'Automatically analyze all snapshots in future manual batches'],
       ['zh-Hant', '快照 AI 審查', '自動分析日後手動批次的所有快照'],
@@ -131,6 +131,11 @@ test('AI review progress, localization, queue API contracts and strict response 
     assert.equal(calls[4].url, '/api/snapshot-analysis/scheduled/2026-11-26?page=2&page_size=20&status=failed')
     assert.equal(calls[4].options.signal, signal)
     assert.equal(calls[4].options.cache, 'no-store')
+    await api.setAnalysisStopped('batch', true, true)
+    await api.setAnalysisStopped('batch', true, false)
+    assert.equal(calls[5].url, '/api/snapshot-analysis/batch/batch/stop')
+    assert.equal(calls[6].url, '/api/snapshot-analysis/batch/batch/resume')
+    assert.equal(calls[5].options.headers['X-Requested-With'], 'XMLHttpRequest')
     globalThis.fetch = async () => Response.json({ ...body, items: [{ ...body.items[0], status: 'completed' }] })
     await assert.rejects(api.startBatchAnalysis('batch', 20), { code: 'responseError' })
     globalThis.fetch = async () => Response.json({ detail: 'Vision analysis is not configured.' }, { status: 503 })
@@ -201,6 +206,18 @@ test('inspection reports exposes bulk capture and run selection in all locales',
       const viewLabels = { en: 'View report', 'zh-Hant': '檢視報告', 'zh-Hans': '查看报告' }
       assert.ok(progress.includes(viewLabels[language]))
       assert.match(progress, /download="snapshot-batch-test-batch.json"/)
+      const activeProgress = renderToStaticMarkup(React.createElement(Provider, null,
+        React.createElement(InspectionProgress, {
+          manual: true, onStop() {}, run: {
+            id: 'test-batch', run_date: '2026-11-26', status: 'running',
+            started_at: null, finished_at: null, total: 2, completed: 0, failed: 0, skipped: 0,
+            interrupted: 0, saved: 0, stopped: 0, capture_brands: ['DAHAU', 'HIKVISION'],
+            stop_requested: ['DAHAU'],
+          },
+        })))
+      assert.match(activeProgress, /disabled=""/)
+      assert.match(activeProgress, /Dahua/)
+      assert.match(activeProgress, /Hikvision/)
       const details = renderToStaticMarkup(React.createElement(Provider, null,
         React.createElement(SnapshotBatchReportDetails, { report: {
           id: 'test-batch', status: 'completed', started_at: '2026-11-26T06:00:00Z',
@@ -220,6 +237,7 @@ test('inspection reports exposes bulk capture and run selection in all locales',
       assert.match(details, /class="snapshot-report-metadata"/)
       assert.match(details, /option value="failed"/)
       assert.match(details, /option value="completed"/)
+      assert.match(details, /option value="stopped"/)
     }
     const api = await server.ssrLoadModule('/src/api.ts')
     const calls = []
@@ -232,12 +250,18 @@ test('inspection reports exposes bulk capture and run selection in all locales',
 
     }
     await api.startSnapshotBatch(true)
+    await api.startSnapshotBatch(false, 'HIKVISION')
+    await api.startSnapshotBatch(false, 'DAHAU')
     await api.setSnapshotChannelExcluded('previous-batch', 'channel-item', true)
     assert.equal(calls[0].url, '/api/snapshot-batches?recheck_skipped=true')
-    assert.equal(calls[1].url, '/api/snapshot-batches/previous-batch/items/channel-item/exclusion')
-    assert.equal(calls[1].options.method, 'PATCH')
-    assert.equal(calls[1].options.headers['X-Requested-With'], 'XMLHttpRequest')
-    assert.deepEqual(JSON.parse(calls[1].options.body), { skip: true })
+    assert.equal(calls[1].url, '/api/snapshot-batches?recheck_skipped=false&brand=HIKVISION')
+    assert.equal(calls[2].url, '/api/snapshot-batches?recheck_skipped=false&brand=DAHAU')
+    assert.equal(calls[3].url, '/api/snapshot-batches/previous-batch/items/channel-item/exclusion')
+    assert.equal(calls[3].options.method, 'PATCH')
+    assert.equal(calls[3].options.headers['X-Requested-With'], 'XMLHttpRequest')
+    assert.deepEqual(JSON.parse(calls[3].options.body), { skip: true })
+    await api.stopSnapshotBatchBrand('test-batch', 'HIKVISION')
+    assert.equal(calls[4].url, '/api/snapshot-batches/test-batch/stop/HIKVISION')
     const report = {
       id: 'test-batch', status: 'completed', started_at: '2026-11-26T06:00:00Z', finished_at: null, items: [],
     }
@@ -247,9 +271,9 @@ test('inspection reports exposes bulk capture and run selection in all locales',
     }
     const signal = new AbortController().signal
     assert.deepEqual(await api.fetchSnapshotBatchReport('test-batch', signal), report)
-    assert.equal(calls[2].url, '/api/snapshot-batches/test-batch/report')
-    assert.equal(calls[2].options.signal, signal)
-    assert.equal(calls[2].options.cache, 'no-store')
+    assert.equal(calls[5].url, '/api/snapshot-batches/test-batch/report')
+    assert.equal(calls[5].options.signal, signal)
+    assert.equal(calls[5].options.cache, 'no-store')
     globalThis.fetch = async () => Response.json({ ...report, id: 'wrong-batch' })
     await assert.rejects(api.fetchSnapshotBatchReport('test-batch', signal), { code: 'responseError' })
     globalThis.fetch = async () => Response.json({ ...report, items: [{ id: 'incomplete-channel' }] })
@@ -260,6 +284,8 @@ test('inspection reports exposes bulk capture and run selection in all locales',
     await assert.rejects(api.fetchInspectionItems('test-batch', 1, signal, true), { code: 'batchStorageError' })
     globalThis.fetch = async () => Response.json({ detail: 'No supported recorders are configured for batch capture.' }, { status: 422 })
     await assert.rejects(api.startSnapshotBatch(false), { code: 'batchNoRecorders' })
+    globalThis.fetch = async () => Response.json({ detail: 'No recorders match the selected brand for batch capture.' }, { status: 422 })
+    await assert.rejects(api.startSnapshotBatch(false, 'HIKVISION'), { code: 'batchNoRecorders' })
   } finally {
     globalThis.fetch = oldFetch
     if (oldStorage === undefined) delete globalThis.localStorage

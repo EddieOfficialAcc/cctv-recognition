@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { fetchInspectionItems, fetchInspectionRuns, fetchRecord, inspectionStatusKeys as statusKeys, setSnapshotChannelExcluded, startSnapshotBatch, type InspectionItem, type InspectionItemPage, type InspectionRun, type RecognitionRecord } from '../api'
+import { fetchInspectionItems, fetchInspectionRuns, fetchRecord, inspectionStatusKeys as statusKeys, setSnapshotChannelExcluded, startSnapshotBatch, stopSnapshotBatchBrand, type CameraBrandFilter, type InspectionItem, type InspectionItemPage, type InspectionRun, type RecognitionRecord } from '../api'
 import { useLocale } from '../localization'
 import { Icon } from './Icon'
 import { Dialog } from './Dialog'
@@ -9,17 +9,28 @@ import { SnapshotAnalysis } from './SnapshotAnalysis'
 
 const runKey = (run: InspectionRun) => run.id ?? run.run_date
 
-export function InspectionProgress({ run, manual, onViewReport }: {
+export function InspectionProgress({ run, manual, onViewReport, onStop, stopBusy }: {
   run: InspectionRun; manual: boolean; onViewReport?: (id: string) => void
+  onStop?: (brand: Exclude<CameraBrandFilter, ''>) => void; stopBusy?: boolean
 }) {
   const { t } = useLocale()
   const id = run.id
-  const processed = run.completed + run.failed + run.skipped
+  const processed = run.completed + run.failed + run.skipped + (run.stopped ?? 0)
   return <div className="worker-panel-body">
     <label>{t('captureProgress', { done: processed, total: run.total })}
       <progress max={Math.max(1, run.total)} value={processed} aria-label={t('captureProgressLabel')} />
     </label>
     <p role="status">{t('captureSaved', { count: run.saved })}</p>
+    {Boolean(run.stopped) && <p role="status">{t('captureStoppedCount', { count: run.stopped ?? 0 })}</p>}
+    {manual && run.status === 'running' && onStop && <div className="configuration-actions">
+      {run.capture_brands?.map(brand => {
+        const requested = run.stop_requested?.includes(brand) ?? false
+        const name = brand === 'DAHAU' ? 'Dahua' : 'Hikvision'
+        return <button key={brand} className="button secondary" disabled={stopBusy || requested}
+          onClick={() => onStop(brand)}>{t(requested ? 'captureStoppingBrand' : 'captureStopBrand', { brand: name })}</button>
+      })}
+    </div>}
+    {Boolean(run.stop_requested?.length) && run.status === 'running' && <p role="status">{t('captureStoppingHint')}</p>}
     {run.error && <p className="error-message" role="alert">{t('batchFailureDetail', { reason: run.error })}</p>}
     {manual && id && <div className="configuration-actions">
       {onViewReport && <button className="text-button" onClick={() => onViewReport(id)}>{t('batchViewReport')}</button>}
@@ -45,7 +56,10 @@ export function InspectionReports({ onSelect, onSchedules, initialBatch, initial
   const [manual, setManual] = useState(true)
   const [starting, setStarting] = useState(false)
   const [startError, setStartError] = useState<Error | null>(null)
+  const [stopBusy, setStopBusy] = useState(false)
+  const [stopError, setStopError] = useState<Error | null>(null)
   const [confirmBatch, setConfirmBatch] = useState(false)
+  const [captureBrand, setCaptureBrand] = useState<CameraBrandFilter>('')
   const [recheckSkipped, setRecheckSkipped] = useState(false)
   const [exclusionBusy, setExclusionBusy] = useState<string | null>(null)
   const [exclusionError, setExclusionError] = useState<Error | null>(null)
@@ -53,7 +67,7 @@ export function InspectionReports({ onSelect, onSchedules, initialBatch, initial
   const [viewReport, setViewReport] = useState<string | null>(null)
   const [tab, setTab] = useState<'capture' | 'analysis'>(initialTab)
   const run = runs.find(entry => runKey(entry) === selected)
-  const itemRevision = run ? `${run.status}:${run.completed}:${run.failed}:${run.skipped}:${run.interrupted}:${run.saved}` : ''
+  const itemRevision = run ? `${run.status}:${run.completed}:${run.failed}:${run.skipped}:${run.interrupted}:${run.stopped}:${run.saved}` : ''
 
   useEffect(() => {
     const controller = new AbortController()
@@ -98,7 +112,7 @@ export function InspectionReports({ onSelect, onSchedules, initialBatch, initial
   async function captureAll() {
     setConfirmBatch(false); setStarting(true); setStartError(null)
     try {
-      const batch = await startSnapshotBatch(recheckSkipped)
+      const batch = await startSnapshotBatch(recheckSkipped, captureBrand)
       setRecheckSkipped(false)
       setManual(true); setRuns([batch]); setSelected(batch.id); setItems(null); setPage(1); setTab('capture')
       setError(null); setRefresh(value => value + 1)
@@ -122,6 +136,19 @@ export function InspectionReports({ onSelect, onSchedules, initialBatch, initial
       setExclusionError(cause instanceof Error ? cause : new Error(String(cause)))
     } finally {
       setExclusionBusy(null)
+    }
+  }
+
+  async function stopCapture(brand: Exclude<CameraBrandFilter, ''>) {
+    if (!run?.id) return
+    setStopBusy(true); setStopError(null)
+    try {
+      await stopSnapshotBatchBrand(run.id, brand)
+    } catch (cause) {
+      console.error('Snapshot capture stop failed:', cause)
+      setStopError(cause instanceof Error ? cause : new Error(String(cause)))
+    } finally {
+      setStopBusy(false); setRefresh(value => value + 1)
     }
   }
 
@@ -179,6 +206,7 @@ export function InspectionReports({ onSelect, onSchedules, initialBatch, initial
     </div>
     </section>
     {error && <div className="error-message" role="alert">{errorMessage(error)}</div>}
+    {stopError && <div className="error-message" role="alert">{errorMessage(stopError)}</div>}
     <div role="tabpanel" id="inspection-panel-analysis" aria-labelledby="inspection-tab-analysis" hidden={tab !== 'analysis'}>
       {tab === 'analysis' && <SnapshotAnalysis key={`${manual}:${selected}`} run={run} manual={manual} onSelect={onSelect} />}
     </div>
@@ -198,7 +226,8 @@ export function InspectionReports({ onSelect, onSchedules, initialBatch, initial
           total: run.total, completed: run.completed, failed: run.failed, skipped: run.skipped, interrupted: run.interrupted,
         })}</span>}
       </div>
-      {run && <InspectionProgress run={run} manual={manual} onViewReport={setViewReport} />}
+      {run && <InspectionProgress run={run} manual={manual} onViewReport={setViewReport}
+        onStop={brand => { void stopCapture(brand) }} stopBusy={stopBusy} />}
       {!loading && !error && !runs.length && <div className="empty-state">{t(manual ? 'batchEmpty' : 'reportEmpty')}</div>}
       {run && <div className="table-container">
         <table><thead><tr><th scope="col">{t('shopCode')}</th><th scope="col">{t('cameraChannel')}</th>
@@ -245,11 +274,19 @@ export function InspectionReports({ onSelect, onSchedules, initialBatch, initial
     {viewReport && <SnapshotBatchReportDialog key={viewReport} id={viewReport} onClose={() => setViewReport(null)} />}
     {confirmBatch && <Dialog className="capture-confirmation" title={t('batchCaptureAll')} subtitle={t('batchConfirm')} onClose={() => setConfirmBatch(false)}>
       <div className="dialog-body" id="dialog-description">
+        <label>{t('batchBrand')}<select value={captureBrand} onChange={event => {
+          const value = event.target.value
+          if (value === '' || value === 'DAHAU' || value === 'HIKVISION') setCaptureBrand(value)
+        }}>
+          <option value="">{t('batchBrandBoth')}</option>
+          <option value="DAHAU">Dahua</option>
+          <option value="HIKVISION">Hikvision</option>
+        </select></label>
         <p>{t('batchArchiveHint')}</p>
         <p>{t('batchSkipHint')}</p>
         <label className="report-option"><input type="checkbox" checked={recheckSkipped} onChange={event => setRecheckSkipped(event.target.checked)} />
           {t('batchRecheckSkipped')}</label>
-        <button className="button primary" onClick={() => { void captureAll() }}>{t('batchCaptureAll')}</button>
+        <button className="button primary" onClick={() => { void captureAll() }}>{t('manualCaptureStart')}</button>
       </div>
     </Dialog>}
     {preview && <Dialog title={t('snapshotPreview')} subtitle={preview.name} onClose={() => setPreview(null)}>

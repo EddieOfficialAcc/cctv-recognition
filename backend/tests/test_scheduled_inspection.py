@@ -14,6 +14,20 @@ from app.recorder import Recorder, RecorderAuthenticationError, RecorderSettings
 
 
 class ScheduledInspectionTest(unittest.TestCase):
+    def test_recorder_selection_filters_brand_in_database_query(self) -> None:
+        connection = Mock()
+        cursor = connection.cursor.return_value
+        cursor.execute.return_value.fetchall.return_value = []
+        with patch("app.scheduled_inspection.DatabaseSettings"), patch(
+            "app.scheduled_inspection.connect", return_value=connection,
+        ):
+            worker._eligible_recorders(include_missing_addresses=True, brand="HIKVISION")
+            sql, *parameters = cursor.execute.call_args.args
+            self.assertIn("WHERE brand = ?", sql)
+            self.assertEqual(parameters, ["HIKVISION"])
+            worker._eligible_recorders(include_missing_addresses=True)
+            self.assertIn("brand IN ('DAHAU', 'HIKVISION')", cursor.execute.call_args.args[0])
+
     def test_cli_delegates_to_shared_frontend_schedules_without_daily_trigger(self) -> None:
         with patch.dict(
             "os.environ", {

@@ -94,6 +94,23 @@ def retry_analysis(kind: Literal["batch", "scheduled"], source_id: str) -> Analy
     return queue.page(source)
 
 
+@router.post("/{kind}/{source_id}/stop", response_model=AnalysisPage, status_code=202)
+def stop_analysis(kind: Literal["batch", "scheduled"], source_id: str) -> AnalysisPage:
+    queue = AnalysisQueue(RecorderSettings().snapshot_dir)
+    source = _source(kind, source_id)
+    queue.stop_source(source)
+    return queue.page(source)
+
+
+@router.post("/{kind}/{source_id}/resume", response_model=AnalysisPage, status_code=202)
+def resume_analysis(kind: Literal["batch", "scheduled"], source_id: str) -> AnalysisPage:
+    require_vision()
+    queue = AnalysisQueue(RecorderSettings().snapshot_dir)
+    source = _source(kind, source_id)
+    queue.resume_source(source)
+    return queue.page(source)
+
+
 @router.get("/{kind}/{source_id}/report")
 def analysis_report(kind: Literal["batch", "scheduled"], source_id: str) -> Response:
     source = _source(kind, source_id)

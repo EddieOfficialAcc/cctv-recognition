@@ -41,16 +41,20 @@ class BatchRun(Run):
     error: str = ""
     analysis_error: str = ""
     schedule_name: str = ""
+    stopped: int = 0
+    capture_brands: list[Literal["DAHAU", "HIKVISION"]] = Field(default_factory=list)
+    stop_requested: list[Literal["DAHAU", "HIKVISION"]] = Field(default_factory=list)
 
 
 class BatchReport(BaseModel):
     id: UUID
-    status: Literal["running", "completed", "interrupted"] = "running"
+    status: Literal["running", "completed", "interrupted", "stopped"] = "running"
     started_at: datetime
     finished_at: datetime | None = None
     error: str = ""
     items: list[Item]
     recorder_keys: dict[int, str] = Field(default_factory=dict)
+    recorder_brands: dict[int, Literal["DAHAU", "HIKVISION"]] = Field(default_factory=dict)
     recheck_skipped: bool = False
     auto_analyze: bool = False
     analysis_error: str = ""
@@ -58,12 +62,15 @@ class BatchReport(BaseModel):
 
     def summary(self) -> BatchRun:
         counts = {status: sum(item.status == status for item in self.items)
-                  for status in ("completed", "failed", "skipped", "interrupted")}
+                  for status in ("completed", "failed", "skipped", "interrupted", "stopped")}
+        brands = sorted({self.recorder_brands[item.recorder_index] for item in self.items
+                         if item.status in ("pending", "capturing") and item.recorder_index in self.recorder_brands})
         return BatchRun(
             id=self.id, run_date=self.started_at.astimezone(HONG_KONG).date(),
             status=self.status, started_at=self.started_at, finished_at=self.finished_at,
             total=len(self.items), saved=sum(item.has_evidence for item in self.items),
-            error=self.error, analysis_error=self.analysis_error, schedule_name=self.schedule_name, **counts,
+            error=self.error, analysis_error=self.analysis_error, schedule_name=self.schedule_name,
+            capture_brands=brands, **counts,
         )
 
 
@@ -178,13 +185,16 @@ def storage_errors(response: Response):
 
 
 def _plan_batch(password: str, root: Path | None = None,
-                recheck_skipped: bool = False, hikvision_password: str = "") -> tuple[BatchReport, dict[int, Recorder]]:
+                recheck_skipped: bool = False, hikvision_password: str = "",
+                *, brand_filter: Literal["DAHAU", "HIKVISION"] | None = None) -> tuple[BatchReport, dict[int, Recorder]]:
     root = root if root is not None else RecorderSettings().snapshot_dir
     exclusions = ChannelExclusions(root)
     report = BatchReport(id=uuid4(), started_at=_utc_now(), items=[], recheck_skipped=recheck_skipped)
     recorders: dict[int, Recorder] = {}
     seen: set[tuple[str, str, str]] = set()
-    for index, row in enumerate(_eligible_recorders(include_missing_addresses=True), 1):
+    rows = (_eligible_recorders(include_missing_addresses=True, brand=brand_filter)
+            if brand_filter else _eligible_recorders(include_missing_addresses=True))
+    for index, row in enumerate(rows, 1):
         if len(row) >= 7:
             shop, region, address, quantity, brand, username, db_password = row[:7]
         else:
@@ -212,6 +222,7 @@ def _plan_batch(password: str, root: Path | None = None,
                 raise RecorderError("Duplicate recorder configuration for this shop and address.")
             seen.add(key)
             recorders[index] = recorder
+            report.recorder_brands[index] = "HIKVISION" if recorder.brand == "HIKVISION" else "DAHAU"
             report.recorder_keys[index] = recorder_key(shop, region, recorder.base)
             if not recheck_skipped:
                 excluded = exclusions.get(report.recorder_keys[index])
@@ -274,14 +285,32 @@ def _capture_batch(root: Path, report: BatchReport, recorders: dict[int, Recorde
                    *, stopped: Event | None = None) -> None:
     try:
         exclusions = ChannelExclusions(root)
+        queue = AnalysisQueue(root)
         present: dict[int, set[int]] = {}
         not_found: dict[int, set[int]] = {}
         rejected: set[int] = set()
+        applied_stops: set[str] = set()
         for item in report.items:
             if item.status != "pending":
                 continue
             if stopped is not None and stopped.is_set():
                 raise CaptureStoppedError()
+            stop_brands = queue.capture_stops_at_boundary(report.id) - applied_stops
+            changed = False
+            if stop_brands:
+                for pending in report.items:
+                    if pending.status != "pending":
+                        continue
+                    brand = report.recorder_brands.get(pending.recorder_index, recorders[pending.recorder_index].brand)
+                    if brand in stop_brands:
+                        pending.status = "stopped"
+                        pending.message = "Capture stopped by user. Start a new batch to capture this channel."
+                        changed = True
+                applied_stops.update(stop_brands)
+            if changed:
+                _write_report(root, report)
+            if item.status == "stopped":
+                continue
             with closing(connection.cursor()) as cursor:
                 cursor.execute("SELECT 1").fetchone()
             if item.recorder_index in rejected:
@@ -307,7 +336,7 @@ def _capture_batch(root: Path, report: BatchReport, recorders: dict[int, Recorde
                     item.message = str(error)[:1000]
             _write_report(root, report)
             if item.has_evidence and item.captured_at:
-                AnalysisQueue(root).register_capture(
+                queue.register_capture(
                     item.id, _evidence_path(root, report, item),
                     report.recorder_keys[item.recorder_index], item.channel, item.captured_at,
                 )
@@ -322,7 +351,7 @@ def _capture_batch(root: Path, report: BatchReport, recorders: dict[int, Recorde
             exclusions.record_results(
                 key, present.get(index, set()), not_found.get(index, set()), recheck=report.recheck_skipped,
             )
-        report.status = "completed"
+        report.status = "stopped" if any(item.status == "stopped" for item in report.items) else "completed"
         report.finished_at = _utc_now()
         _write_report(root, report)
     except Exception as error:
@@ -347,7 +376,8 @@ router = APIRouter(prefix="/api/snapshot-batches", tags=["snapshot batches"],
 
 
 @router.post("", response_model=BatchRun, status_code=202)
-def start_batch(background: BackgroundTasks, recheck_skipped: bool = False) -> BatchRun:
+def start_batch(background: BackgroundTasks, recheck_skipped: bool = False,
+                brand: Literal["DAHAU", "HIKVISION"] | None = None) -> BatchRun:
     settings = RecorderSettings()
     password = settings.dahau_password.get_secret_value()
     hikvision_password = settings.hikvision_password.get_secret_value()
@@ -359,16 +389,32 @@ def start_batch(background: BackgroundTasks, recheck_skipped: bool = False) -> B
         raise HTTPException(409, "A manual snapshot batch is already running.")
     try:
         _recover_interrupted(settings.snapshot_dir)
-        report, recorders = _plan_batch(password, settings.snapshot_dir, recheck_skipped, hikvision_password)
+        report, recorders = _plan_batch(
+            password, settings.snapshot_dir, recheck_skipped, hikvision_password, brand_filter=brand,
+        )
         report.auto_analyze = auto_analyze
         if not report.items:
-            raise HTTPException(422, "No supported recorders are configured for batch capture.")
+            raise HTTPException(422, "No recorders match the selected brand for batch capture.")
         _write_report(settings.snapshot_dir, report)
         background.add_task(_capture_batch, settings.snapshot_dir, report, recorders, connection)
         return report.summary()
     except Exception:
         _release_lock(connection)
         raise
+
+
+@router.post("/{batch_id}/stop/{brand}", response_model=BatchRun, status_code=202)
+def stop_batch_brand(batch_id: UUID, brand: Literal["DAHAU", "HIKVISION"]) -> BatchRun:
+    root = RecorderSettings().snapshot_dir
+    report = _read_report(root, batch_id)
+    summary = report.summary()
+    if report.status != "running" or brand not in summary.capture_brands:
+        raise HTTPException(409, "This brand has no capture in progress.")
+    queue = AnalysisQueue(root)
+    queue.request_capture_stop(batch_id, brand)
+    stops = queue.capture_stops(batch_id)
+    summary.stop_requested = [value for value in ("DAHAU", "HIKVISION") if value in stops]
+    return summary
 
 
 def _enqueue_item(root: Path, report: BatchReport, item: Item) -> None:
@@ -404,7 +450,14 @@ def list_batches() -> list[BatchRun]:
     root = RecorderSettings().snapshot_dir
     _refresh_reports(root)
     reports = sorted(_reports(root), key=lambda report: report.started_at, reverse=True)
-    return [report.summary() for report in reports[:100]]
+    summaries = []
+    for report in reports[:100]:
+        summary = report.summary()
+        if report.status == "running":
+            stops = AnalysisQueue(root).capture_stops(report.id)
+            summary.stop_requested = [value for value in ("DAHAU", "HIKVISION") if value in stops]
+        summaries.append(summary)
+    return summaries
 
 
 @router.get("/{batch_id}/items", response_model=ItemPage)

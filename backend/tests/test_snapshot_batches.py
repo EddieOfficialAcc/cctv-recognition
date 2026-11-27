@@ -105,6 +105,50 @@ class SnapshotBatchesTest(unittest.TestCase):
             future.result(timeout=5)
         self.assertEqual(batches._read_report(self.root, report.id).summary().completed, 3)
 
+    def test_stop_one_brand_finishes_active_capture_and_continues_other_brand(self) -> None:
+        self._eligible_recorders.return_value = [
+            ("001", "Hong Kong", "192.0.2.1:81", 2, "DAHAU", "admin", "test-only"),
+            ("002", "Hong Kong", "192.0.2.2:81", 2, "HIKVISION", "admin", "test-only"),
+        ]
+        for stopped_brands, expected in (
+            (("DAHAU",), [("DAHAU", 1), ("HIKVISION", 1), ("HIKVISION", 2)]),
+            (("HIKVISION",), [("DAHAU", 1), ("DAHAU", 2)]),
+            (("DAHAU", "HIKVISION"), [("DAHAU", 1)]),
+        ):
+            with self.subTest(brands=stopped_brands):
+                entered, release = Event(), Event()
+                calls = []
+
+                def capture(recorder, channel):
+                    calls.append((recorder.brand, channel))
+                    if len(calls) == 1:
+                        entered.set()
+                        if not release.wait(5):
+                            raise TimeoutError("Test did not release capture.")
+                    return self.image
+
+                report, recorders = batches._plan_batch("test-only", self.root)
+                batches._write_report(self.root, report)
+                with patch("app.recorder.Recorder.snapshot", new=capture), ThreadPoolExecutor() as pool:
+                    future = pool.submit(batches._capture_batch, self.root, report, recorders, MagicMock())
+                    try:
+                        self.assertTrue(entered.wait(5))
+                        with TestClient(app) as client, patch("app.snapshot_batches._acquire_lock", return_value=None):
+                            for brand in stopped_brands:
+                                response = client.post(f"/api/snapshot-batches/{report.id}/stop/{brand}")
+                                self.assertEqual(response.status_code, 202)
+                                self.assertIn(brand, response.json()["stop_requested"])
+                            self.assertEqual(batches._read_report(self.root, report.id).items[0].status, "capturing")
+                            self.assertEqual(client.post(f"/api/snapshot-batches/{report.id}/stop/other").status_code, 422)
+                    finally:
+                        release.set()
+                    future.result(timeout=5)
+                result = batches._read_report(self.root, report.id)
+                self.assertEqual(calls, expected)
+                self.assertEqual(result.status, "stopped")
+                self.assertEqual(result.items[0].status, "completed")
+                self.assertEqual(result.summary().stopped, 4 - len(expected))
+
     def test_auth_failure_does_not_retry_rejected_recorder_and_continues_next(self) -> None:
         self._eligible_recorders.return_value.append(("002", "Macau", "192.0.2.2", 1))
         with TestClient(app) as client, patch(
@@ -145,6 +189,39 @@ class SnapshotBatchesTest(unittest.TestCase):
             call(None, "http://192.0.2.1:81", "admin", "dahua-test"),
             call(None, "http://192.0.2.2:81", "operator", "hik-test"),
         ])
+
+    def test_manual_batch_brand_filter_limits_capture_and_rejects_invalid_values(self) -> None:
+        rows = [
+            ("001", "Hong Kong", "192.0.2.1:81", 1, "DAHAU", "admin", "test-only"),
+            ("002", "Hong Kong", "192.0.2.2:81", 1, "HIKVISION", "admin", "test-only"),
+        ]
+        def select_recorders(*, include_missing_addresses, brand=None):
+            return [row for row in rows if brand is None or row[4] == brand]
+
+        self._eligible_recorders.side_effect = select_recorders
+        captured = []
+        def capture(recorder, channel):
+            captured.append((recorder.brand, channel))
+            return self.image
+
+        with TestClient(app) as client, patch("app.recorder.Recorder.snapshot", new=capture):
+            for query, expected in (
+                ("brand=DAHAU", ["DAHAU"]),
+                ("brand=HIKVISION", ["HIKVISION"]),
+                ("", ["DAHAU", "HIKVISION"]),
+            ):
+                captured.clear()
+                response = client.post(f"/api/snapshot-batches?{query}")
+                self.assertEqual(response.status_code, 202)
+                self.assertEqual(response.json()["total"], len(expected))
+                self.assertEqual([brand for brand, _ in captured], expected)
+            self._acquire_lock.reset_mock()
+            self.assertEqual(client.post("/api/snapshot-batches?brand=other").status_code, 422)
+            self._acquire_lock.assert_not_called()
+            rows[:] = [row for row in rows if row[4] == "DAHAU"]
+            response = client.post("/api/snapshot-batches?brand=HIKVISION")
+            self.assertEqual(response.status_code, 422)
+            self.assertIn("selected brand", response.json()["detail"])
 
     def test_archive_failure_is_reported_without_claiming_saved_image(self) -> None:
         with TestClient(app) as client, patch(

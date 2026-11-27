@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   analysisSource, analysisStatusKeys, fetchAnalysis, fetchAnalysisSettings, fetchRecord, outcomeKeys,
-  retryAnalysis, setAutoAnalysis, startBatchAnalysis,
+  retryAnalysis, setAnalysisStopped, setAutoAnalysis, startBatchAnalysis,
   type AnalysisPage, type AnalysisSettings, type AnalysisStatus, type InspectionRun, type RecognitionRecord,
 } from '../api'
 import { useLocale } from '../localization'
@@ -16,18 +16,19 @@ export function AnalysisProgress({ summary, saved }: { summary: AnalysisPage['su
     </label>
     <p className="sr-only" role="status">{t('aiCounts', {
       queued: summary.queued, analyzing: summary.analyzing, completed: summary.completed,
-      failed: summary.failed, flagged: summary.flagged,
+      failed: summary.failed, stopped: summary.stopped, flagged: summary.flagged,
     })}</p>
     <dl className="analysis-metrics">
       {([
         ['queued', 'aiQueued'], ['analyzing', 'aiAnalyzing'], ['completed', 'runCompleted'],
-        ['failed', 'runFailed'], ['flagged', 'flagged'],
+        ['failed', 'runFailed'], ['stopped', 'runStopped'], ['flagged', 'flagged'],
       ] as const).map(([key, title]) => <div key={key} className={`analysis-metric analysis-metric-${key}`}>
         <dt>{t(title)}</dt><dd>{summary[key]}</dd>
       </div>)}
     </dl>
     {!summary.worker_online && (summary.queued > 0 || summary.analyzing > 0) &&
       <p className="error-message" role="alert">{t('aiOffline')}</p>}
+    {summary.stop_requested && <p role="status">{t(summary.analyzing ? 'aiStoppingHint' : 'aiStoppedHint')}</p>}
   </div>
 }
 
@@ -112,8 +113,13 @@ export function SnapshotAnalysis({ run, manual, onSelect }: {
       {run && <div className="analysis-actions">
         <div className="configuration-actions">
           {manual && <button className={`button ${data?.summary.total ? 'secondary' : 'primary'}`}
-            disabled={busy || !settings?.configured || captureRunning || !run.saved}
+            disabled={busy || !settings?.configured || captureRunning || !run.saved || data?.summary.stop_requested}
             onClick={() => { setLimit(20); setConfirm(true) }}>{t('aiAnalyzeBatch')}</button>}
+          {data && (data.summary.stop_requested || data.summary.queued > 0 || data.summary.analyzing > 0 || captureRunning) &&
+            <button className="button secondary" disabled={busy || (data.summary.stop_requested && !settings?.configured)}
+              onClick={() => { void mutate(() => setAnalysisStopped(id, manual, !data.summary.stop_requested)) }}>
+              {t(data.summary.stop_requested ? 'aiResume' : 'aiStop')}
+            </button>}
           {Boolean(data?.summary.total) && <button className="button primary" onClick={() => setView(true)}>{t('aiResults')}</button>}
           {Boolean(data?.summary.failed) && <button className="button secondary" disabled={busy || !settings?.configured}
             onClick={() => { void mutate(() => retryAnalysis(id, manual)) }}>{t('aiRetry')}</button>}
@@ -165,12 +171,12 @@ export function SnapshotAnalysis({ run, manual, onSelect }: {
         {data && run && <AnalysisProgress summary={data.summary} saved={run.saved} />}
         <label>{t('result')} <select value={status} onChange={event => {
           const value = event.target.value
-          if (value === '' || value === 'queued' || value === 'analyzing' || value === 'completed' || value === 'failed') {
+          if (value === '' || value === 'queued' || value === 'analyzing' || value === 'completed' || value === 'failed' || value === 'stopped') {
             setStatus(value); setPage(1)
           }
         }}>
           <option value="">{t('batchReportAllResults')}</option>
-          {(['queued', 'analyzing', 'completed', 'failed'] as const).map(value =>
+          {(['queued', 'analyzing', 'completed', 'failed', 'stopped'] as const).map(value =>
             <option key={value} value={value}>{t(analysisStatusKeys[value])}</option>)}
         </select></label>
         <div className="table-container"><table>

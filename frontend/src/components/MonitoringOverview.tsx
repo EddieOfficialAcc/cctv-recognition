@@ -126,11 +126,11 @@ export function MonitoringOverview({ onSchedules, onReports, onManualCapture, on
           <button className="row-action" onClick={() => onReports()}>{t('monitoringAllReports')}<Icon name="chevron" size={15} /></button></div>
         <p className="monitoring-panel-hint">{t('monitoringRunsHint')}</p>
         {runs.length ? <div className="monitoring-run-list">{runs.map(run => <article className="monitoring-run" key={run.id}>
-          <span className={`run-symbol ${run.failed || run.status === 'failed' || run.status === 'interrupted' ? 'amber' : 'teal'}`}><Icon name="camera" size={20} /></span>
+          <span className={`run-symbol ${run.failed || run.status === 'failed' || run.status === 'interrupted' || run.status === 'stopped' ? 'amber' : 'teal'}`}><Icon name="camera" size={20} /></span>
           <div className="run-description"><h3>{run.schedule_name || t('monitoringOnDemand')}</h3>
             <p>{run.started_at ? <time dateTime={run.started_at}>{formatDate(run.started_at)}</time> : t('notProvided')}</p>
             <p>{t('monitoringRunCounts', { saved: run.saved, failed: run.failed, skipped: run.skipped })}</p></div>
-          <span className={`badge ${run.status === 'failed' || run.status === 'interrupted' ? 'flagged' : 'needs_review'}`}>{t(inspectionStatusKeys[run.status] ?? 'runUnknown')}</span>
+          <span className={`badge ${run.status === 'failed' || run.status === 'interrupted' || run.status === 'stopped' ? 'flagged' : 'needs_review'}`}>{t(inspectionStatusKeys[run.status] ?? 'runUnknown')}</span>
           <button className="button secondary compact" onClick={() => onReports(run.id)}>{t('monitoringOpenResults')}<Icon name="chevron" size={14} /></button>
         </article>)}</div> : <div className="empty-state monitoring-empty"><span className="empty-icon"><Icon name="camera" size={27} /></span>
           <h3>{t('monitoringNoRuns')}</h3><p>{t('monitoringNoRunsHint')}</p></div>}

@@ -20,6 +20,7 @@ export function SnapshotBatchReportDetails({ report }: { report: SnapshotBatchRe
           total: report.items.length, completed: count('completed'), failed: count('failed'),
           skipped: count('skipped'), interrupted: count('interrupted'),
         })}</span>
+        {count('stopped') > 0 && <span>{t('captureStoppedCount', { count: count('stopped') })}</span>}
       </div>
       <div className="snapshot-report-metadata">
         <p>{t('captureSaved', { count: report.items.filter(item => item.has_evidence).length })}</p>
@@ -33,7 +34,7 @@ export function SnapshotBatchReportDetails({ report }: { report: SnapshotBatchRe
       setStatus(event.target.value); setPage(1)
     }}>
       <option value="">{t('batchReportAllResults')}</option>
-      {['completed', 'failed', 'skipped', 'interrupted', 'pending', 'capturing', 'captured'].map(value =>
+      {['completed', 'failed', 'skipped', 'interrupted', 'stopped', 'pending', 'capturing', 'captured'].map(value =>
         <option key={value} value={value}>{t(inspectionStatusKeys[value] ?? 'runUnknown')}</option>)}
     </select></label></div>
     <div className="table-container">

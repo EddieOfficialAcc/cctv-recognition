@@ -121,6 +121,19 @@ class ReviewSchedulesTest(unittest.TestCase):
         self.assertEqual((recovered.id, recovered.batch_id, recovered.status, recovered.has_report),
                          (occurrence.id, occurrence.batch_id, "completed", True))
 
+    def test_restart_recovers_user_stopped_batch(self):
+        occurrence = self.claim()
+        report = batches.BatchReport(id=occurrence.batch_id, status="stopped", started_at=self.due,
+                                     finished_at=self.due, items=[], schedule_name="Weekly review")
+        batches._write_report(self.root, report)
+        self.store.lead("replacement", self.due + timedelta(seconds=61))
+        recovered = self.store.page().history[0]
+        self.assertEqual((recovered.status, recovered.message), ("stopped", ""))
+        with patch("app.review_schedules.RecorderSettings", return_value=self.settings), patch(
+            "app.snapshot_batches._acquire_lock", return_value=MagicMock(),
+        ), patch("app.snapshot_batches._release_lock"), patch("app.snapshot_batches._recover_interrupted"):
+            self.assertEqual(schedules.capture_review(self.root, occurrence, Event()), ("stopped", ""))
+
     def test_restart_without_saved_report_is_explicitly_interrupted(self):
         self.claim()
         self.store.lead("replacement", self.due + timedelta(seconds=61))

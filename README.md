@@ -60,7 +60,9 @@ Rows with missing credentials, invalid counts or missing addresses are reported
 as skipped; capture failures are reported per channel. A rejected login stops
 further attempts on that recorder.
 
-Use **Inspection center** to start a batch or inspect its saved results, and
+Use **Inspection center** to start a batch or inspect its saved results. Manual
+batches default to both brands; the capture dialog can restrict a batch to
+Dahua or Hikvision. This selection does not change scheduled checks. Use
 **Automatic AI checks** to configure schedules in Hong Kong time. The web
 backend must stay running; `SNAPSHOT_ANALYSIS_WORKER_ENABLED=false` disables
 both its AI worker and scheduler. Manual batches and scheduled checks save JPEGs
@@ -69,6 +71,14 @@ and reports under `camera-snapshots/batches` (or
 AI review of future manual batches; scheduled reviews queue analysis. A
 single-camera capture in **Camera configuration** is archived separately and
 can also be downloaded in the browser.
+
+For a running batch, **Inspection center** can stop capture separately for each
+brand. The current capture and download finish; unstarted channels for that
+brand are marked stopped, while the other brand continues. Stopping AI review
+applies only to the selected batch or daily run: all reviews already in flight
+finish, and queued or newly captured snapshots wait until review is resumed.
+Saved snapshots and completed results are retained. Stopping one scheduled
+occurrence does not disable future schedules.
 
 The workbook is not automatically imported. Check network access, credentials,
 camera compatibility, archive permissions and storage capacity before enabling
