@@ -291,6 +291,31 @@ tbody tr:last-child td { border-bottom: 0; }
 .dialog-header h2 { font-size: 21px; letter-spacing: -.4px; overflow-wrap: anywhere; }
 .dialog-header .eyebrow { font-size: 9px; margin-bottom: 7px; }
 .dialog-body { padding: 24px 26px; }
+.snapshot-report-dialog .dialog-header { padding: 20px 26px; }
+.snapshot-report-dialog .dialog-header h2 { font-size: 22px; }
+.snapshot-report-dialog .dialog-header .eyebrow { font-size: 10px; letter-spacing: .8px; }
+.snapshot-report-dialog .dialog-body { padding: 22px 26px 26px; }
+.snapshot-report-dialog .field-hint { max-width: 76ch; margin: 0 0 16px; color: #687b91; font-size: 12px; line-height: 1.6; }
+.snapshot-report-dialog .configuration-actions { align-items: center; gap: 12px; padding-bottom: 18px; border-bottom: 1px solid #e8edf2; }
+.snapshot-report-dialog .configuration-actions .button,
+.snapshot-report-dialog .configuration-actions .text-button { font-size: 13px; }
+.snapshot-report-summary { display: grid; gap: 12px; margin: 20px 0 22px; font-size: clamp(14px, 1vw, 15px); line-height: 1.55; overflow-wrap: anywhere; }
+.snapshot-report-overview { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; padding: 14px 16px; border: 1px solid #e6ebf2; border-radius: 9px; background: #f6f8fb; }
+.snapshot-report-overview strong { color: #273b52; font-size: 15px; font-weight: 650; }
+.snapshot-report-overview span { color: #586b81; }
+.snapshot-report-metadata { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.snapshot-report-metadata p { min-width: 0; padding: 12px 14px; border: 1px solid #e6ebf2; border-radius: 8px; color: #53677e; background: white; }
+.snapshot-report-summary .error-message { margin: 0; }
+.snapshot-report-dialog .filter-bar { padding: 0 0 14px; }
+.snapshot-report-dialog .filter-bar label { font-size: 13px; }
+.snapshot-report-dialog .filter-bar select { width: auto; min-width: 155px; margin-top: 7px; font-size: 13px; }
+.snapshot-report-dialog .table-container { min-height: 240px; border: 1px solid #e8edf2; border-radius: 8px; }
+.snapshot-report-dialog table { min-width: 760px; }
+.snapshot-report-dialog th { padding: 13px 12px; font-size: 12px; }
+.snapshot-report-dialog td { padding: 14px 12px; color: #40556d; font-size: 13px; line-height: 1.45; }
+.snapshot-report-dialog th:first-child, .snapshot-report-dialog td:first-child { padding-left: 16px; }
+.snapshot-report-dialog th:last-child, .snapshot-report-dialog td:last-child { padding-right: 16px; }
+.snapshot-report-dialog .table-footer { padding: 14px 0 0; border-top: 0; color: #687b91; font-size: 12px; }
 .muted { font-size: 12px; line-height: 1.7; color: #7f8fa2; }
 .small { font-size: 10px; }
 .dropzone { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 9px; background: #f8fbfc; border: 1px dashed #b7d4d6; border-radius: 9px; padding: 26px 16px; margin: 20px 0 22px; color: #4e7179; }
@@ -411,7 +436,16 @@ textarea { resize: vertical; min-height: 85px; }
   .table-footer { padding: 14px 15px; font-size: 9px; } .pagination { gap: 6px; }
   .workspace-footer { flex-direction: column; gap: 8px; font-size: 9px; } .form-grid { grid-template-columns: 1fr; gap: 15px; }
   .dialog-header, .dialog-body { padding: 20px; } .dialog-footer { padding: 16px 20px; }
+  .snapshot-report-dialog .dialog-header, .snapshot-report-dialog .dialog-body { padding-left: 18px; padding-right: 18px; }
+  .snapshot-report-metadata { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .snapshot-report-metadata p:first-child { grid-column: 1 / -1; }
+  .snapshot-report-dialog .table-container { min-height: 180px; }
+  .snapshot-report-dialog .table-footer { align-items: flex-start; flex-wrap: wrap; }
   .check-card-heading { flex-wrap: wrap; } .metadata-grid { gap: 10px; } dd { font-size: 10px; }
+}
+@media (max-width: 420px) {
+  .snapshot-report-metadata { grid-template-columns: minmax(0, 1fr); }
+  .snapshot-report-metadata p:first-child { grid-column: auto; }
 }
 .sidebar-hidden .workspace { margin-left: 0; }
 .stat-detail, .cell-subtitle, .camera-cell > div:last-child > span, .table-footer,

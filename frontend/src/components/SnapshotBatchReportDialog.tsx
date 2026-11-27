@@ -13,15 +13,22 @@ export function SnapshotBatchReportDetails({ report }: { report: SnapshotBatchRe
   const rows = filtered.slice((page - 1) * 20, page * 20)
   const count = (value: string) => report.items.filter(item => item.status === value).length
   return <>
-    <p>{t(inspectionStatusKeys[report.status] ?? 'runUnknown')} · {t('reportCounts', {
-      total: report.items.length, completed: count('completed'), failed: count('failed'),
-      skipped: count('skipped'), interrupted: count('interrupted'),
-    })}</p>
-    <p>{t('captureSaved', { count: report.items.filter(item => item.has_evidence).length })}</p>
-    <p>{t('batchReportStarted', { time: formatDate(report.started_at, true) })}</p>
-    <p>{t('batchReportFinished', { time: formatDate(report.finished_at, true) })}</p>
-    {report.error && <p className="error-message" role="alert">{t('batchFailureDetail', { reason: report.error })}</p>}
-    {report.analysis_error && <p className="error-message" role="alert">{t('aiEnqueueError', { reason: report.analysis_error })}</p>}
+    <div className="snapshot-report-summary">
+      <div className="snapshot-report-overview">
+        <strong>{t(inspectionStatusKeys[report.status] ?? 'runUnknown')}</strong>
+        <span>{t('reportCounts', {
+          total: report.items.length, completed: count('completed'), failed: count('failed'),
+          skipped: count('skipped'), interrupted: count('interrupted'),
+        })}</span>
+      </div>
+      <div className="snapshot-report-metadata">
+        <p>{t('captureSaved', { count: report.items.filter(item => item.has_evidence).length })}</p>
+        <p>{t('batchReportStarted', { time: formatDate(report.started_at, true) })}</p>
+        <p>{t('batchReportFinished', { time: formatDate(report.finished_at, true) })}</p>
+      </div>
+      {report.error && <p className="error-message" role="alert">{t('batchFailureDetail', { reason: report.error })}</p>}
+      {report.analysis_error && <p className="error-message" role="alert">{t('aiEnqueueError', { reason: report.analysis_error })}</p>}
+    </div>
     <div className="filter-bar"><label>{t('result')} <select value={status} onChange={event => {
       setStatus(event.target.value); setPage(1)
     }}>
@@ -77,7 +84,7 @@ export function SnapshotBatchReportDialog({ id, onClose }: { id: string; onClose
     return () => controller.abort()
   }, [id, refresh])
 
-  return <Dialog wide title={t('batchViewReport')} subtitle={id} onClose={onClose}>
+  return <Dialog wide className="snapshot-report-dialog" title={t('batchViewReport')} subtitle={id} onClose={onClose}>
     <div className="dialog-body" id="dialog-description">
       <p className="field-hint">{t('batchReportViewHint')}</p>
       <div className="configuration-actions">

@@ -147,14 +147,14 @@ export function InspectionReports({ onSelect, onSchedules, initialBatch, initial
     {startError && <div className="error-message inspection-start-error" role="alert">{errorMessage(startError)}</div>}
     <div className="inspection-results-heading"><h2>{t('inspectionResultsTitle')}</h2><p>{t('inspectionResultsHint')}</p></div>
     <div className="report-tabs" role="tablist" aria-label={t('reportViews')}>
-      {(['analysis', 'capture'] as const).map(value => <button key={value} type="button" role="tab"
+      {(['capture', 'analysis'] as const).map(value => <button key={value} type="button" role="tab"
         id={`inspection-tab-${value}`} aria-controls={`inspection-panel-${value}`}
         aria-selected={tab === value} tabIndex={tab === value ? 0 : -1}
         onClick={() => setTab(value)} onKeyDown={event => {
           let next: typeof tab
           if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') next = tab === 'capture' ? 'analysis' : 'capture'
-          else if (event.key === 'Home') next = 'analysis'
-          else if (event.key === 'End') next = 'capture'
+          else if (event.key === 'Home') next = 'capture'
+          else if (event.key === 'End') next = 'analysis'
           else return
           event.preventDefault(); setTab(next); document.getElementById(`inspection-tab-${next}`)?.focus()
         }}>{t(value === 'capture' ? 'reportCaptureTab' : 'aiReview')}</button>)}

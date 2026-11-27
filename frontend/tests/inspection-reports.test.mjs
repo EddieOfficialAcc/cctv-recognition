@@ -168,11 +168,13 @@ test('inspection reports exposes bulk capture and run selection in all locales',
       assert.match(html, /option value="manual" selected=""/)
       assert.match(html, /camera-snapshots\/batches/)
       assert.match(html, /role="tablist"/)
+      assert.ok(html.indexOf('id="inspection-tab-capture"') < html.indexOf('id="inspection-tab-analysis"'))
       assert.match(html, /id="inspection-tab-capture"[^>]*aria-selected="true"/)
       assert.match(html, /id="inspection-tab-analysis"[^>]*aria-selected="false"/)
       assert.doesNotMatch(html, /type="checkbox"/)
       const defaultView = renderToStaticMarkup(React.createElement(Provider, null,
         React.createElement(InspectionReports, { onSelect() {}, onSchedules() {} })))
+      assert.ok(defaultView.indexOf('id="inspection-tab-capture"') < defaultView.indexOf('id="inspection-tab-analysis"'))
       assert.match(defaultView, /id="inspection-tab-analysis"[^>]*aria-selected="true"/)
       assert.match(defaultView, /id="inspection-tab-capture"[^>]*aria-selected="false"/)
       assert.match(defaultView, /option value="manual" selected=""/)
@@ -212,6 +214,8 @@ test('inspection reports exposes bulk capture and run selection in all locales',
       assert.match(details, /<td>172<\/td>/)
       assert.match(details, /<td>173<\/td>/)
       assert.match(details, /Recorder returned HTTP 404\./)
+      assert.match(details, /class="snapshot-report-overview"/)
+      assert.match(details, /class="snapshot-report-metadata"/)
       assert.match(details, /option value="failed"/)
       assert.match(details, /option value="completed"/)
     }
