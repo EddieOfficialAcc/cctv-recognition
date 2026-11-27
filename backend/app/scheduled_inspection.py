@@ -53,8 +53,8 @@ def _eligible_recorders(*, include_missing_addresses: bool = False) -> list:
     address_filter = "" if include_missing_addresses else " AND internal_ip IS NOT NULL"
     with closing(connect(DatabaseSettings())) as connection, closing(connection.cursor()) as cursor:
         return cursor.execute(
-            "SELECT shop_code, region, internal_ip, cam_qty "
-            f"FROM dbo.cctv_config WHERE brand = 'DAHAU'{address_filter} "
+            "SELECT shop_code, region, internal_ip, cam_qty, brand, admin_name, admin_password "
+            f"FROM dbo.cctv_config WHERE brand IN ('DAHAU', 'HIKVISION'){address_filter} "
             "ORDER BY shop_code"
         ).fetchall()
 
@@ -99,8 +99,13 @@ class CapturePlan:
 
 def _prepare_recorder(run_date: date, recorder_index: int, row,
                       seen_recorders: set[tuple[str, str, str]], shared_password: str,
-                      exclusions: ChannelExclusions | None = None) -> CapturePlan | None:
-    shop, region, ip, quantity = row
+                      exclusions: ChannelExclusions | None = None,
+                      hikvision_password: str = "") -> CapturePlan | None:
+    if len(row) >= 7:
+        shop, region, ip, quantity, brand, username, db_password = row[:7]
+    else:
+        shop, region, ip, quantity = row[:4]
+        brand, username, db_password = "DAHAU", "admin", ""
     shop = (shop or "").strip()
     region = (region or "").strip()
     try:
@@ -108,7 +113,13 @@ def _prepare_recorder(run_date: date, recorder_index: int, row,
             raise RecorderError("Shop code or region is invalid.")
         if not isinstance(quantity, int) or not 1 <= quantity <= MAX_CHANNELS:
             raise RecorderError(f"Configured camera count must be between 1 and {MAX_CHANNELS}.")
-        recorder = Recorder(ip, "admin", shared_password)
+        brand = (brand or "DAHAU").strip().upper()
+        username = (username or "admin").strip()
+        password = (db_password or "").strip()
+        if not password:
+            password = hikvision_password if brand == "HIKVISION" else shared_password
+        recorder = (Recorder(ip, username, password, brand)
+                    if brand != "DAHAU" else Recorder(ip, username, password))
         configuration_key = (shop, region, recorder.base)
         if configuration_key in seen_recorders:
             raise RecorderError("Duplicate recorder configuration for this shop and address.")
@@ -212,13 +223,14 @@ def _mark_missed_and_interrupted(now: datetime, public_holidays: Container[date]
         current += timedelta(days=1)
 
 
-def _run(today: date, snapshot_dir: Path, shared_password: str, analyze: bool) -> None:
+def _run(today: date, snapshot_dir: Path, shared_password: str, analyze: bool,
+         hikvision_password: str = "") -> None:
     _execute("INSERT INTO dbo.inspection_runs (run_date, status, started_at) VALUES (?, 'running', ?)",
              today, _db_time(_utc_now()))
     rows = _eligible_recorders()
     seen_recorders: set[tuple[str, str, str]] = set()
     exclusions = ChannelExclusions(snapshot_dir)
-    plans = [(index, row, _prepare_recorder(today, index, row, seen_recorders, shared_password, exclusions))
+    plans = [(index, row, _prepare_recorder(today, index, row, seen_recorders, shared_password, exclusions, hikvision_password))
              for index, row in enumerate(rows, 1)]
     for index, row, plan in plans:
         if plan is None:
@@ -255,8 +267,13 @@ def main() -> None:
         return
     recorder_settings = RecorderSettings()
     shared_password = recorder_settings.dahau_password.get_secret_value()
-    if not shared_password or not shared_password.strip():
-        logger.error("Set SCHEDULED_INSPECTION_DAHAU_PASSWORD before starting the worker.")
+    hikvision_password = recorder_settings.hikvision_password.get_secret_value()
+    if ((not shared_password or not shared_password.strip())
+            and (not hikvision_password or not hikvision_password.strip())):
+        logger.error(
+            "Set SCHEDULED_INSPECTION_DAHAU_PASSWORD or "
+            "SCHEDULED_INSPECTION_HIKVISION_PASSWORD before starting the worker."
+        )
         raise SystemExit(1)
     from app.review_schedules import ReviewScheduler
     from app.snapshot_analysis import AnalysisWorker, QueueSettings

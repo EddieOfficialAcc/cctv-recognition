@@ -5,7 +5,7 @@ export type ReviewStatus = 'new' | 'acknowledged' | 'false_positive'
 export type Outcome = 'flagged' | 'needs_review'
 export type Region = 'Hong Kong' | 'Macau'
 
-export type ErrorCode = 'rulesConflictError' | 'rulesValidationError' | 'rulesStorageError' | 'scheduleConflictError' | 'scheduleValidationError' | 'aiConfigurationError' | 'aiStorageError' | 'batchExclusionAmbiguous' | 'batchAlreadyRunning' | 'batchNoRecorders' | 'snapshotConfigurationError' | 'requestError' | 'storageError' | 'analysisError' | 'validationError' | 'notFoundError' |
+export type ErrorCode = 'rulesConflictError' | 'rulesValidationError' | 'rulesStorageError' | 'scheduleConflictError' | 'scheduleValidationError' | 'aiConfigurationError' | 'aiStorageError' | 'batchStorageError' | 'batchExclusionAmbiguous' | 'batchAlreadyRunning' | 'batchNoRecorders' | 'snapshotConfigurationError' | 'requestError' | 'storageError' | 'analysisError' | 'validationError' | 'notFoundError' |
   'responseError' | 'fileTypeError' | 'fileSizeError' | 'imageCorruptError' | 'resolutionError' | 'animatedError'
 
 export class ApiError extends Error {
@@ -227,8 +227,10 @@ async function request<T>(
     if (message === 'Manual snapshot capture is not configured.') code = 'snapshotConfigurationError'
     if (message === 'Vision analysis is not configured.') code = 'aiConfigurationError'
     if (message === 'AI review storage or configuration unavailable.') code = 'aiStorageError'
+    if (message === 'Snapshot batch storage unavailable.') code = 'batchStorageError'
     if (message === 'A manual snapshot batch is already running.') code = 'batchAlreadyRunning'
     if (message === 'No DAHAU recorders are configured for batch capture.') code = 'batchNoRecorders'
+    if (message === 'No supported recorders are configured for batch capture.') code = 'batchNoRecorders'
     if (message === 'A unique current recorder configuration is required to exclude this channel.') code = 'batchExclusionAmbiguous'
     if (url.startsWith('/api/review-schedules')) {
       if (response.status === 409) code = 'scheduleConflictError'
@@ -240,7 +242,7 @@ async function request<T>(
       if (response.status === 503) code = 'rulesStorageError'
     }
     if (response.status === 422) {
-      if (message.includes('supported')) code = 'fileTypeError'
+      if (message.includes('supported') && code === 'validationError') code = 'fileTypeError'
       else if (message.includes('10 MB')) code = 'fileSizeError'
       else if (message.includes('corrupt')) code = 'imageCorruptError'
       else if (message.includes('20 megapixels')) code = 'resolutionError'

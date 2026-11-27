@@ -117,6 +117,35 @@ class SnapshotBatchesTest(unittest.TestCase):
         self.assertEqual([item["status"] for item in items], ["failed", "failed", "failed", "completed"])
         self.assertIn("Not attempted", items[1]["message"])
 
+    def test_batch_captures_dahua_and_hikvision_with_their_own_credentials(self) -> None:
+        self._eligible_recorders.return_value = [
+            ("001", "Hong Kong", "192.0.2.1:81", 1, "DAHAU", "admin", "dahua-test"),
+            ("002", "Hong Kong", "192.0.2.2:81", 2, "HIKVISION", "operator", "hik-test"),
+        ]
+        requests = []
+
+        def capture(recorder, path, limit):
+            requests.append((recorder.brand, recorder.base, path))
+            return self.image
+
+        with TestClient(app) as client, patch(
+            "app.recorder.Recorder._get", autospec=True, side_effect=capture,
+        ), patch("app.recorder.HTTPPasswordMgrWithDefaultRealm") as manager:
+            response = client.post("/api/snapshot-batches")
+            self.assertEqual(response.status_code, 202)
+            items = client.get(f"/api/snapshot-batches/{response.json()['id']}/items").json()["items"]
+        self.assertEqual([item["status"] for item in items], ["completed"] * 3)
+        self.assertEqual([entry[2] for entry in requests], [
+            "/cgi-bin/snapshot.cgi?channel=1",
+            "/ISAPI/Streaming/channels/101/picture",
+            "/ISAPI/Streaming/channels/201/picture",
+        ])
+        self.assertEqual([entry[0] for entry in requests], ["DAHAU", "HIKVISION", "HIKVISION"])
+        self.assertEqual(manager.return_value.add_password.call_args_list, [
+            call(None, "http://192.0.2.1:81", "admin", "dahua-test"),
+            call(None, "http://192.0.2.2:81", "operator", "hik-test"),
+        ])
+
     def test_archive_failure_is_reported_without_claiming_saved_image(self) -> None:
         with TestClient(app) as client, patch(
             "app.snapshot_batches.Recorder.snapshot", return_value=self.image,
@@ -315,6 +344,24 @@ class SnapshotBatchesTest(unittest.TestCase):
             with patch("app.snapshot_batches.Recorder.snapshot", return_value=self.image) as snapshot:
                 client.post("/api/snapshot-batches")
             self.assertEqual(snapshot.call_args_list, [call(1), call(2), call(3)])
+
+    def test_legacy_report_resolves_current_rows_with_brand_and_credentials(self) -> None:
+        report, _ = batches._plan_batch("test-only")
+        report.recorder_keys = {}
+        report.status = "completed"
+        batches._write_report(self.root, report)
+        self._eligible_recorders.return_value = [
+            ("001", "Hong Kong", "192.0.2.1:81", 3, "HIKVISION", "admin", "test-only"),
+        ]
+        with TestClient(app) as client:
+            response = client.get(f"/api/snapshot-batches/{report.id}/items")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["total"], 3)
+            self.assertTrue(all(item["can_exclude"] for item in response.json()["items"]))
+            item_id = report.items[0].id
+            self.assertEqual(client.patch(
+                f"/api/snapshot-batches/{report.id}/items/{item_id}/exclusion", json={"skip": True},
+            ).status_code, 200)
 
     def test_scheduled_capture_respects_manual_exclusions_without_contacting_disabled_channel(self) -> None:
         key = recorder_key("001", "Hong Kong", "http://192.0.2.1:81")

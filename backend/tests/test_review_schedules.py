@@ -160,6 +160,23 @@ class ReviewSchedulesTest(unittest.TestCase):
             self.assertEqual(self.release.call_count, 2)
             model.assert_not_called()
 
+    def test_scheduled_capture_includes_hikvision_and_dahua(self):
+        occurrence = self.claim()
+        self.capture_setup()
+        self._eligible_recorders.return_value = [
+            ("001", "Hong Kong", "192.0.2.1", 1, "DAHAU", "admin", "dahua-test"),
+            ("002", "Hong Kong", "192.0.2.2", 1, "HIKVISION", "admin", "hik-test"),
+        ]
+        captured = []
+        image = self.snapshot.return_value
+        def capture(recorder, channel):
+            captured.append((recorder.brand, channel))
+            return image
+        with patch("app.snapshot_batches.Recorder.snapshot", new=capture):
+            status, _ = schedules.capture_review(self.root, occurrence, Event())
+        self.assertEqual(status, "completed")
+        self.assertEqual(captured, [("DAHAU", 1), ("HIKVISION", 1)])
+
     def test_shutdown_interrupts_between_cameras_without_losing_report_or_lock(self):
         occurrence = self.claim()
         self.capture_setup()

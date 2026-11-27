@@ -181,6 +181,8 @@ test('inspection reports exposes bulk capture and run selection in all locales',
       assert.ok(defaultView.includes(capture), 'manual capture is available on the default view')
       assert.ok(defaultView.includes(schedule))
       assert.ok(defaultView.includes(results))
+      assert.match(defaultView, /Dahua/)
+      assert.match(defaultView, /Hikvision/)
       const progress = renderToStaticMarkup(React.createElement(Provider, null,
         React.createElement(InspectionProgress, {
           manual: true,
@@ -254,6 +256,10 @@ test('inspection reports exposes bulk capture and run selection in all locales',
     await assert.rejects(api.fetchSnapshotBatchReport('test-batch', signal), { code: 'responseError' })
     globalThis.fetch = async () => Response.json({ detail: 'Storage unavailable.' }, { status: 503 })
     await assert.rejects(api.fetchSnapshotBatchReport('test-batch', signal), { code: 'storageError' })
+    globalThis.fetch = async () => Response.json({ detail: 'Snapshot batch storage unavailable.' }, { status: 503 })
+    await assert.rejects(api.fetchInspectionItems('test-batch', 1, signal, true), { code: 'batchStorageError' })
+    globalThis.fetch = async () => Response.json({ detail: 'No supported recorders are configured for batch capture.' }, { status: 422 })
+    await assert.rejects(api.startSnapshotBatch(false), { code: 'batchNoRecorders' })
   } finally {
     globalThis.fetch = oldFetch
     if (oldStorage === undefined) delete globalThis.localStorage

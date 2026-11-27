@@ -12,7 +12,7 @@ Vite and Tailwind CSS frontend and a Python FastAPI backend.
 
 The Best Mart 360-inspired interface keeps RetailVision as the product name.
 It opens on **Monitoring overview**, centered on periodic,
-LLM-powered camera inspections: schedule fresh DAHAU snapshots, inspect them
+LLM-powered camera inspections: schedule fresh Dahua and Hikvision snapshots, inspect them
 with the configured vision model, then review the findings. The overview
 refreshes service readiness, enabled schedules, the next planned check (Hong
 Kong time), and recent capture batches every ten seconds. These indicators
@@ -20,7 +20,7 @@ describe automation readiness, not live camera health. Capture completion
 does not imply that AI review is complete.
 
 Use **Automatic AI checks** to manage schedules. In **Inspection center**,
-start a manual capture of all configured DAHAU cameras or review capture and
+start a manual capture of all configured Dahua and Hikvision cameras or review capture and
 AI progress. Manual captures follow the separate automatic analysis setting
 for manual batches; starting a capture does not necessarily start AI review.
 The center opens on AI review for capture batches, which include current
@@ -43,94 +43,39 @@ Use **Refresh** to reload it; the tab does not poll automatically. It shows
 only whether both credentials are present, never the username or password.
 The application database login requires SELECT permission on `dbo.cctv_config`.
 
-### Scheduled DAHAU snapshots
+### Recorder snapshots
 
-The optional worker selects `brand = 'DAHAU'` rows with a configured Internal
-IP. It uses the port in that address (default `81`), HTTP Digest authentication
-and `/cgi-bin/snapshot.cgi?channel=<number>`. Set
-`SCHEDULED_INSPECTION_DAHAU_PASSWORD` in the worker's private environment before
-starting it. The worker always uses the shared `admin` account and never reads
-recorder credentials from SQL. Never commit passwords.
+Manual batches and scheduled checks select `DAHAU` and `HIKVISION` rows in
+`dbo.cctv_config` and request channels 1 through `cam_qty`. Dahua uses its CGI
+snapshot endpoint; Hikvision uses ISAPI. Both use HTTP Digest authentication
+and the port embedded in `internal_ip` (default 81). The separate `port` field
+is not used for capture.
 
-The worker requests snapshots for channels `1` through `cam_qty` at each
-recorder's Internal IP, without a separate discovery request. An unavailable
-or invalid snapshot is recorded as a failure and does not stop the next
-channel. If authentication fails, the remaining channels are marked failed
-without repeating the rejected login. An invalid camera count is reported as a
-skipped recorder. Reports identify each requested channel by number. To keep baseline
-matching independent of channel-name or shop-configuration changes, automated
-recognition records instead use a stable channel-number and opaque recorder
-identifier as the camera name. Existing baselines approved under other names
-will not match; approve new baselines for these identities. The identifier
-mapping is stored in the application database and must be retained for baseline
-continuity. Changing a recorder's address, shop or region creates a new identity.
-Duplicate entries for the same shop and recorder are skipped.
+The backend uses each row's `admin_name` and `admin_password` when present,
+falling back to `admin` and the respective private
+`SCHEDULED_INSPECTION_DAHAU_PASSWORD` or
+`SCHEDULED_INSPECTION_HIKVISION_PASSWORD` setting. At least one shared password
+must be configured to start batches or enable schedules. Never commit passwords.
+Rows with missing credentials, invalid counts or missing addresses are reported
+as skipped; capture failures are reported per channel. A rejected login stops
+further attempts on that recorder.
 
-The worker starts a run at 09:30 Hong Kong time, Monday through Friday,
-excluding Hong Kong public holidays and their observed dates. This calendar
-applies to the whole run, including Macau recorders. Capture is sequential, so
-individual capture times may be later. A missed start is reported rather than
-run later; weekends and holidays do not produce missed-run entries.
+Use **Inspection center** to start a batch or inspect its saved results, and
+**Automatic AI checks** to configure schedules in Hong Kong time. The web
+backend must stay running; `SNAPSHOT_ANALYSIS_WORKER_ENABLED=false` disables
+both its AI worker and scheduler. Manual batches and scheduled checks save JPEGs
+and reports under `camera-snapshots/batches` (or
+`SCHEDULED_INSPECTION_SNAPSHOT_DIR`). The automatic analysis setting controls
+AI review of future manual batches; scheduled reviews queue analysis. A
+single-camera capture in **Camera configuration** is archived separately and
+can also be downloaded in the browser.
 
-Valid snapshots are saved as JPEGs at
-`camera-snapshots/<run-date>/<recorder-id>/channel-<number>.jpg`. The archive is
-gitignored and not served directly by the app. Capture-only is the default:
-the daily report shows per-channel results and downloadable evidence, but no
-vision request is sent. Set `SCHEDULED_INSPECTION_ANALYZE=true` in the worker
-environment to also run the existing three checks and create recognition
-records. A worker restart marks interrupted work and missed runs; already saved
-JPEGs remain on disk.
-
-Open **Inspection center**, select **Capture details & reports**, and select **View snapshot** on a saved
-result to preview its JPEG in the app. For an on-demand image, open **Camera
-configuration**, choose **Capture snapshot** on a DAHAU recorder, select a
-channel, and choose **Capture and download**. Supported browsers prompt for a
-local filename and folder; other browsers use their normal download settings.
-Manual capture fetches one channel, previews it in the dialog, and saves it on
-the browser's machine. It does not write to scheduled run history, the worker's
-archive, or the vision service. To enable it, set
-`SCHEDULED_INSPECTION_DAHAU_PASSWORD` in the **web backend process** environment
-and restart that backend. Setting it only for the scheduled worker does not
-enable browser-triggered capture.
-
-Do not enable the worker until device behavior, network access, image handling,
-permissions, runtime, storage capacity and vision-service costs are verified.
-HTTP does not encrypt screenshots; use a trusted network. Basic authentication
-is not supported. The container needs network access to the configured Internal
-IPs; the separate database `port` field is not used for snapshots. The schema
-must be reapplied before use, and the runtime SQL login needs SELECT on
-`dbo.cctv_config` and SELECT, INSERT and UPDATE on the inspection tables as
-well as the existing recognition tables. Restrict the platform to trusted
-operators and ensure camera-image transmission to the vision service is approved.
-
-The worker is disabled by default. For local Windows development, install the
-updated backend requirements, apply the database schema, then set the shared
-password privately in the worker's environment. From the project root:
-
-```powershell
-Set-Location backend
-.\.venv\Scripts\python -m pip install -r requirements.txt
-$env:SCHEDULED_INSPECTION_ENABLED = 'true'
-$env:SCHEDULED_INSPECTION_DAHAU_PASSWORD = [System.Net.NetworkCredential]::new(
-    '', (Read-Host 'Shared DAHAU password' -AsSecureString)
-).Password
-.\.venv\Scripts\python -m app.scheduled_inspection
-```
-
-Keep the process running through 09:30. For a direct process, set
-`SCHEDULED_INSPECTION_SNAPSHOT_DIR` to override the archive location. For
-Compose, set `SCHEDULED_INSPECTION_ENABLED=true` in the Compose environment
-and put the required shared password and optional analysis setting in the private backend
-environment file. Create the project-root `camera-snapshots` folder with write
-access for the container's `appuser`, then start the `inspection-worker` with
-`docker compose --profile inspection up -d --build inspection-worker`.
-The website's **Automatic AI checks** page manages the web backend's review
-schedules and shows scheduled capture history. It does not start or configure
-this legacy command-line worker or store its credentials. Its scheduler
-status describes the web backend, not the legacy worker process.
-Keep the archive private and manage disk space. The worker uses a SQL Server
-application lock to prevent concurrent workers and does not automatically
-restart after an error.
+The workbook is not automatically imported. Check network access, credentials,
+camera compatibility, archive permissions and storage capacity before enabling
+capture. HTTP does not encrypt snapshots; use a trusted network. API login
+success does not guarantee that every recorder or channel supports snapshots.
+Restrict the archive and confirm that sending images to the vision service is
+approved. No new SQL tables are required specifically for Hikvision capture.
 
 ## Local development (Windows PowerShell)
 

@@ -1,4 +1,4 @@
-"""Read-only DAHAU snapshot adapter. Device compatibility is not yet verified."""
+"""Read-only Dahua and Hikvision snapshot adapters."""
 import ipaddress
 from pathlib import Path
 import re
@@ -25,6 +25,7 @@ class RecorderSettings(BaseSettings):
     )
 
     dahau_password: SecretStr = SecretStr("")
+    hikvision_password: SecretStr = SecretStr("")
     snapshot_dir: Path = DEFAULT_SNAPSHOT_DIR
 
 
@@ -66,10 +67,11 @@ def _address(value: str) -> str:
 
 
 class Recorder:
-    def __init__(self, internal_ip: str, username: str, password: str):
+    def __init__(self, internal_ip: str, username: str, password: str, brand: str = "DAHAU"):
         if not username.strip() or not password.strip():
             raise RecorderError("Recorder credentials are incomplete.")
         self.base = f"http://{_address(internal_ip)}"
+        self.brand = brand.strip().upper()
         manager = HTTPPasswordMgrWithDefaultRealm()
         manager.add_password(None, self.base, username.strip(), password)
         self.opener = build_opener(ProxyHandler({}), RejectRedirects(), HTTPDigestAuthHandler(manager))
@@ -93,4 +95,14 @@ class Recorder:
     def snapshot(self, channel: int) -> bytes:
         if not 1 <= channel <= MAX_CHANNELS:
             raise RecorderError("Invalid channel number.")
+        if self.brand == "HIKVISION":
+            for path in (
+                f"/ISAPI/Streaming/channels/{channel * 100 + 1}/picture",
+                f"/ISAPI/Streaming/channels/{channel}/picture",
+            ):
+                try:
+                    return self._get(path, MAX_UPLOAD_BYTES)
+                except RecorderChannelNotFoundError:
+                    continue
+            raise RecorderChannelNotFoundError("Recorder returned HTTP 404 for the configured channel.")
         return self._get(f"/cgi-bin/snapshot.cgi?channel={channel}", MAX_UPLOAD_BYTES)

@@ -113,7 +113,7 @@ def list_snapshot_recorders(response: Response) -> list[SnapshotRecorder]:
     with closing(connect(DatabaseSettings())) as connection, closing(connection.cursor()) as cursor:
         rows = cursor.execute(
             "SELECT shop_code, region, MAX(shop_name), MAX(cam_qty) FROM dbo.cctv_config "
-            "WHERE brand = 'DAHAU' AND internal_ip IS NOT NULL "
+            "WHERE brand IN ('DAHAU', 'HIKVISION') AND internal_ip IS NOT NULL "
             "AND NULLIF(LTRIM(RTRIM(shop_code)), '') IS NOT NULL "
             "AND NULLIF(LTRIM(RTRIM(region)), '') IS NOT NULL "
             "GROUP BY shop_code, region HAVING COUNT(*) = 1 AND MAX(cam_qty) >= 1 "
@@ -126,26 +126,37 @@ def list_snapshot_recorders(response: Response) -> list[SnapshotRecorder]:
 @router.post("/snapshot", response_class=Response)
 def capture_snapshot(selection: SnapshotRequest) -> Response:
     settings = RecorderSettings()
-    password = settings.dahau_password.get_secret_value()
-    if not password or not password.strip():
-        raise HTTPException(503, "Manual snapshot capture is not configured.")
     with closing(connect(DatabaseSettings())) as connection, closing(connection.cursor()) as cursor:
         rows = cursor.execute(
-            "SELECT TOP (2) internal_ip, cam_qty FROM dbo.cctv_config "
-            "WHERE brand = 'DAHAU' AND shop_code = ? AND region = ? AND internal_ip IS NOT NULL",
+            "SELECT TOP (2) brand, internal_ip, cam_qty, admin_name, admin_password FROM dbo.cctv_config "
+            "WHERE brand IN ('DAHAU', 'HIKVISION') AND shop_code = ? AND region = ? AND internal_ip IS NOT NULL",
             selection.shop_code, selection.region,
         ).fetchall()
     if not rows:
-        raise HTTPException(404, "DAHAU recorder not found.")
+        raise HTTPException(404, "Recorder not found.")
     if len(rows) != 1:
-        raise HTTPException(409, "Multiple DAHAU recorders match this shop and region.")
-    address, quantity = rows[0]
+        raise HTTPException(409, "Multiple recorders match this shop and region.")
+    row = rows[0]
+    if len(row) >= 5:
+        brand, address, quantity, username, db_password = row[:5]
+    else:
+        address, quantity = row[:2]
+        brand, username, db_password = "DAHAU", "admin", ""
     if not isinstance(quantity, int) or selection.channel > quantity:
         raise HTTPException(422, "Channel is outside the configured camera count.")
+    brand = (brand or "DAHAU").strip().upper()
+    username = (username or "admin").strip()
+    password = (db_password or "").strip()
+    if not password:
+        password = (settings.hikvision_password if brand == "HIKVISION" else settings.dahau_password).get_secret_value()
+    if not password or not password.strip():
+        raise HTTPException(503, "Manual snapshot capture is not configured.")
     if not manual_capture_lock.acquire(blocking=False):
         raise HTTPException(429, "Another manual capture is in progress. Try again shortly.")
     try:
-        image = prepare_screenshot(Recorder(address, "admin", password).snapshot(selection.channel))
+        recorder = (Recorder(address, username, password, brand)
+                    if brand != "DAHAU" else Recorder(address, username, password))
+        image = prepare_screenshot(recorder.snapshot(selection.channel))
         capture_id = str(uuid4())
         day = datetime.now(timezone(timedelta(hours=8))).date()
         try:

@@ -137,7 +137,7 @@ export function CameraConfiguration() {
               <td>{row.credentials_complete ? <span aria-label={t('configurationValueHidden')}>••••••</span> : '—'}</td>
               <td>{row.credentials_complete ? <span aria-label={t('configurationValueHidden')}>••••••</span> : '—'}</td>
               <td>{t(row.credentials_complete ? 'configurationComplete' : 'configurationIncomplete')}</td>
-              <td>{row.brand === 'DAHAU' && row.shop_code && row.region && row.internal_ip &&
+              <td>{(row.brand === 'DAHAU' || row.brand === 'HIKVISION') && row.shop_code && row.region && row.internal_ip &&
                 row.cam_qty !== null && row.cam_qty > 0 &&
                 <button className="text-button" onClick={() => {
                   if (row.shop_code && row.region && row.cam_qty) {

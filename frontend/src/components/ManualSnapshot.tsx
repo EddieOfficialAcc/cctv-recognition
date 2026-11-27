@@ -97,7 +97,7 @@ export function ManualSnapshot({ recorder, onClose }: {
     }
   }
 
-  return <Dialog title={t('snapshotCapture')} subtitle={recorder?.shop ?? 'DAHAU'} onClose={onClose} busy={busy}>
+  return <Dialog title={t('snapshotCapture')} subtitle={recorder?.shop ?? ''} onClose={onClose} busy={busy}>
     <form className="dialog-body" id="dialog-description" onSubmit={capture}>
       {!recorder && <label>{t('snapshotRecorder')}<select value={selection} disabled={busy || !recorders?.length}
         onChange={event => { setSelection(event.target.value); setChannel(1); setError(null) }}>

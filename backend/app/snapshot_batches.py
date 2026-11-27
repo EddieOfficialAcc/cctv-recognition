@@ -178,14 +178,18 @@ def storage_errors(response: Response):
 
 
 def _plan_batch(password: str, root: Path | None = None,
-                recheck_skipped: bool = False) -> tuple[BatchReport, dict[int, Recorder]]:
+                recheck_skipped: bool = False, hikvision_password: str = "") -> tuple[BatchReport, dict[int, Recorder]]:
     root = root if root is not None else RecorderSettings().snapshot_dir
     exclusions = ChannelExclusions(root)
     report = BatchReport(id=uuid4(), started_at=_utc_now(), items=[], recheck_skipped=recheck_skipped)
     recorders: dict[int, Recorder] = {}
     seen: set[tuple[str, str, str]] = set()
     for index, row in enumerate(_eligible_recorders(include_missing_addresses=True), 1):
-        shop, region, address, quantity = row
+        if len(row) >= 7:
+            shop, region, address, quantity, brand, username, db_password = row[:7]
+        else:
+            shop, region, address, quantity = row[:4]
+            brand, username, db_password = "DAHAU", "admin", ""
         shop, region = (shop or "").strip(), (region or "").strip()
         message = ""
         excluded: dict[int, str] = {}
@@ -196,7 +200,13 @@ def _plan_batch(password: str, root: Path | None = None,
                 raise RecorderError(f"Configured camera count must be between 1 and {MAX_CHANNELS}.")
             if not isinstance(address, str) or not address.strip():
                 raise RecorderError("Recorder internal IP address is missing.")
-            recorder = Recorder(address, "admin", password)
+            brand = (brand or "DAHAU").strip().upper()
+            username = (username or "admin").strip()
+            recorder_password = (db_password or "").strip()
+            if not recorder_password:
+                recorder_password = hikvision_password if brand == "HIKVISION" else password
+            recorder = (Recorder(address, username, recorder_password, brand)
+                        if brand != "DAHAU" else Recorder(address, username, recorder_password))
             key = (shop, region, recorder.base)
             if key in seen:
                 raise RecorderError("Duplicate recorder configuration for this shop and address.")
@@ -340,7 +350,8 @@ router = APIRouter(prefix="/api/snapshot-batches", tags=["snapshot batches"],
 def start_batch(background: BackgroundTasks, recheck_skipped: bool = False) -> BatchRun:
     settings = RecorderSettings()
     password = settings.dahau_password.get_secret_value()
-    if not password.strip():
+    hikvision_password = settings.hikvision_password.get_secret_value()
+    if not password.strip() and not hikvision_password.strip():
         raise HTTPException(503, "Manual snapshot capture is not configured.")
     auto_analyze = AnalysisQueue(settings.snapshot_dir).auto_analyze()
     connection = _acquire_lock()
@@ -348,10 +359,10 @@ def start_batch(background: BackgroundTasks, recheck_skipped: bool = False) -> B
         raise HTTPException(409, "A manual snapshot batch is already running.")
     try:
         _recover_interrupted(settings.snapshot_dir)
-        report, recorders = _plan_batch(password, settings.snapshot_dir, recheck_skipped)
+        report, recorders = _plan_batch(password, settings.snapshot_dir, recheck_skipped, hikvision_password)
         report.auto_analyze = auto_analyze
         if not report.items:
-            raise HTTPException(422, "No DAHAU recorders are configured for batch capture.")
+            raise HTTPException(422, "No supported recorders are configured for batch capture.")
         _write_report(settings.snapshot_dir, report)
         background.add_task(_capture_batch, settings.snapshot_dir, report, recorders, connection)
         return report.summary()
@@ -426,7 +437,7 @@ def _report_recorder_keys(report: BatchReport) -> dict[int, str]:
                       if (row[0] or "").strip() == item.shop_code and (row[1] or "").strip() == item.region]
         if len(candidates) != 1:
             continue
-        shop, region, address, quantity = candidates[0]
+        shop, region, address, quantity = candidates[0][:4]
         if not isinstance(address, str) or not address.strip() or not isinstance(quantity, int):
             continue
         if not 1 <= item.channel <= quantity <= MAX_CHANNELS:

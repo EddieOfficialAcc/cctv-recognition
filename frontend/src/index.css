@@ -291,6 +291,11 @@ tbody tr:last-child td { border-bottom: 0; }
 .dialog-header h2 { font-size: 21px; letter-spacing: -.4px; overflow-wrap: anywhere; }
 .dialog-header .eyebrow { font-size: 9px; margin-bottom: 7px; }
 .dialog-body { padding: 24px 26px; }
+.capture-confirmation .dialog-header .eyebrow { font-size: 14px; font-weight: 400; letter-spacing: normal; line-height: 1.6; margin-bottom: 10px; }
+.capture-confirmation .dialog-body { display: grid; gap: 16px; font-size: 14px; line-height: 1.65; }
+.capture-confirmation .dialog-body .report-option { display: flex; align-items: flex-start; font-size: 14px; font-weight: 400; }
+.capture-confirmation .dialog-body .report-option input { margin-top: 3px; }
+.capture-confirmation .dialog-body .button { justify-self: start; font-size: 14px; }
 .snapshot-report-dialog .dialog-header { padding: 20px 26px; }
 .snapshot-report-dialog .dialog-header h2 { font-size: 22px; }
 .snapshot-report-dialog .dialog-header .eyebrow { font-size: 10px; letter-spacing: .8px; }

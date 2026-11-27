@@ -243,7 +243,7 @@ export function InspectionReports({ onSelect, onSchedules, initialBatch, initial
     </section>
     </div>
     {viewReport && <SnapshotBatchReportDialog key={viewReport} id={viewReport} onClose={() => setViewReport(null)} />}
-    {confirmBatch && <Dialog title={t('batchCaptureAll')} subtitle={t('batchConfirm')} onClose={() => setConfirmBatch(false)}>
+    {confirmBatch && <Dialog className="capture-confirmation" title={t('batchCaptureAll')} subtitle={t('batchConfirm')} onClose={() => setConfirmBatch(false)}>
       <div className="dialog-body" id="dialog-description">
         <p>{t('batchArchiveHint')}</p>
         <p>{t('batchSkipHint')}</p>

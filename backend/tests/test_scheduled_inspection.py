@@ -45,6 +45,19 @@ class ScheduledInspectionTest(unittest.TestCase):
             call("http://192.0.2.2:81/cgi-bin/snapshot.cgi?channel=1", timeout=10),
         ])
 
+    def test_hikvision_snapshot_uses_isapi_picture_endpoint(self) -> None:
+        with patch("app.recorder.build_opener") as build_opener:
+            opener = build_opener.return_value
+            opener.open.return_value.__enter__.return_value.read.return_value = b"hikvision-snapshot"
+            self.assertEqual(
+                Recorder("192.0.2.10:81", "admin", "test-only", "HIKVISION").snapshot(3),
+                b"hikvision-snapshot",
+            )
+        opener.open.assert_called_once_with(
+            "http://192.0.2.10:81/ISAPI/Streaming/channels/301/picture",
+            timeout=10,
+        )
+
     def test_enabled_worker_requires_shared_password_before_database_access(self) -> None:
         with patch.dict("os.environ", {"SCHEDULED_INSPECTION_ENABLED": "true"}, clear=True), patch(
             "app.scheduled_inspection.connect",

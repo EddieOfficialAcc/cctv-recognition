@@ -259,8 +259,9 @@ def capture_review(root: Path, occurrence: Occurrence, stopped: Event) -> tuple[
     try:
         settings = RecorderSettings()
         password = settings.dahau_password.get_secret_value()
-        if not password.strip():
-            return "failed", "Shared DAHAU capture credentials are not configured."
+        hikvision_password = settings.hikvision_password.get_secret_value()
+        if not password.strip() and not hikvision_password.strip():
+            return "failed", "Shared snapshot capture credentials are not configured."
         with ExitStack() as cleanup:
             connection = batches._acquire_lock()
             if connection is None:
@@ -271,9 +272,11 @@ def capture_review(root: Path, occurrence: Occurrence, stopped: Event) -> tuple[
             if existing.is_file():
                 report = batches.BatchReport.model_validate_json(existing.read_text("utf-8"))
             else:
-                report, recorders = batches._plan_batch(password, root)
+                report, recorders = batches._plan_batch(
+                    password, root, hikvision_password= hikvision_password,
+                )
                 if not report.items:
-                    return "failed", "No DAHAU recorders are configured for capture."
+                    return "failed", "No supported recorders are configured for capture."
                 report.id = occurrence.batch_id
                 report.auto_analyze = True
                 report.schedule_name = occurrence.schedule_name

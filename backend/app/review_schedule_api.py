@@ -35,7 +35,9 @@ def _store() -> ScheduleStore:
 def _check_enabled(selection: ScheduleInput) -> None:
     if selection.enabled:
         require_vision()
-        if not RecorderSettings().dahau_password.get_secret_value().strip():
+        settings = RecorderSettings()
+        if (not settings.dahau_password.get_secret_value().strip()
+                and not settings.hikvision_password.get_secret_value().strip()):
             raise HTTPException(503, "Manual snapshot capture is not configured.")
 
 
